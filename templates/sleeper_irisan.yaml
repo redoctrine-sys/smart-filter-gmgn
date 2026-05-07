@@ -1,0 +1,65 @@
+# =====================================================================
+# Sleeper filter — "Irisan" template
+# Source: synthesis of @ELPonyin, @badidoyo, @Andri_Snnn, @PradonoNovaldo
+# Pipeline: sleeper (poll 60s, source: GMGN low-cap scanner)
+# =====================================================================
+id: sleeper_irisan
+name: "Irisan Sleeper (default)"
+pipeline: sleeper
+score_threshold: 65
+
+hard_rules:
+  - metric: market_cap_usd
+    op: between
+    value: [7000, 25000]
+  - metric: mint_authority
+    op: equals
+    value: revoked
+  - metric: freeze_authority
+    op: equals
+    value: revoked
+  - metric: socials_count
+    op: gte
+    value: 1
+  - metric: age_hours
+    op: gt
+    value: 24
+  - metric: honeypot
+    op: equals
+    value: false
+
+scoring:
+  - metric: narrative_score
+    op: gte
+    value: 7
+    points: 20
+  - metric: volume_spike_ratio
+    op: gte
+    value: 3
+    points: 20
+  - metric: holder_stacked
+    op: equals
+    value: true
+    points: 15
+  - metric: bundler_pct
+    op: lt
+    value: 6
+    points: 15
+  - metric: global_fee_status
+    op: equals
+    value: green
+    points: 15
+  - metric: near_fib_786
+    op: equals
+    value: true
+    points: 15
+
+boosters:
+  - metric: smart_money_buys
+    op: gte
+    value: 2
+    points: 10
+  - metric: dex_paid_status
+    op: equals
+    value: paid
+    points: 10
