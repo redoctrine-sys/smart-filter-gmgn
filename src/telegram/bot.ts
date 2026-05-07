@@ -4,6 +4,7 @@ import { getBotState, setBotState } from "../db/client.js";
 import { mutedRepo } from "../db/repos.js";
 import { logger } from "../utils/logger.js";
 import { runAndSendDigest } from "./digest.js";
+import type { Pipeline } from "../capture/snapshotter.js";
 
 export const bot = new Telegraf(env.TELEGRAM_BOT_TOKEN);
 
@@ -15,17 +16,23 @@ export const bot = new Telegraf(env.TELEGRAM_BOT_TOKEN);
 export const target = {
   chatId: env.TELEGRAM_CHAT_ID || getBotState("chat_id") || "",
   topics: {
-    new_pair: env.TELEGRAM_TOPIC_NEW_PAIR || getBotState("topic_new_pair") || "",
+    before_migrated:
+      env.TELEGRAM_TOPIC_BEFORE_MIGRATED || getBotState("topic_before_migrated") || "",
+    after_migrated:
+      env.TELEGRAM_TOPIC_AFTER_MIGRATED || getBotState("topic_after_migrated") || "",
     sleeper: env.TELEGRAM_TOPIC_SLEEPER || getBotState("topic_sleeper") || "",
     post_alert: env.TELEGRAM_TOPIC_POST_ALERT || getBotState("topic_post_alert") || "",
   },
 };
 
+const TOPIC_KINDS = ["before_migrated", "after_migrated", "sleeper", "post_alert"] as const;
+type TopicKind = (typeof TOPIC_KINDS)[number];
+
 function persistTarget(): void {
   if (target.chatId) setBotState("chat_id", target.chatId);
-  if (target.topics.new_pair) setBotState("topic_new_pair", target.topics.new_pair);
-  if (target.topics.sleeper) setBotState("topic_sleeper", target.topics.sleeper);
-  if (target.topics.post_alert) setBotState("topic_post_alert", target.topics.post_alert);
+  for (const k of TOPIC_KINDS) {
+    if (target.topics[k]) setBotState(`topic_${k}`, target.topics[k]);
+  }
 }
 
 bot.command("setup", async (ctx) => {
@@ -41,7 +48,8 @@ bot.command("setup", async (ctx) => {
         `Chat ID detected: ${chatId}`,
         "",
         "Inside each topic, run one of:",
-        "  /setup new_pair",
+        "  /setup before_migrated",
+        "  /setup after_migrated",
         "  /setup sleeper",
         "  /setup post_alert",
       ].join("\n"),
@@ -53,24 +61,23 @@ bot.command("setup", async (ctx) => {
     await ctx.reply("Run /setup <kind> *inside* the topic thread, not in General.");
     return;
   }
-  const tid = String(threadId);
-  if (arg === "new_pair") target.topics.new_pair = tid;
-  else if (arg === "sleeper") target.topics.sleeper = tid;
-  else if (arg === "post_alert") target.topics.post_alert = tid;
-  else {
-    await ctx.reply("Unknown kind. Use new_pair | sleeper | post_alert.");
+  if (!TOPIC_KINDS.includes(arg as TopicKind)) {
+    await ctx.reply(`Unknown kind. Use ${TOPIC_KINDS.join(" | ")}.`);
     return;
   }
+  const tid = String(threadId);
+  target.topics[arg as TopicKind] = tid;
   persistTarget();
   await ctx.reply(
     [
       `Saved: ${arg} → thread ${tid}`,
       "",
       "Current config:",
-      `  chat_id        = ${target.chatId}`,
-      `  new_pair       = ${target.topics.new_pair || "(unset)"}`,
-      `  sleeper        = ${target.topics.sleeper || "(unset)"}`,
-      `  post_alert     = ${target.topics.post_alert || "(unset)"}`,
+      `  chat_id          = ${target.chatId}`,
+      `  before_migrated  = ${target.topics.before_migrated || "(unset)"}`,
+      `  after_migrated   = ${target.topics.after_migrated || "(unset)"}`,
+      `  sleeper          = ${target.topics.sleeper || "(unset)"}`,
+      `  post_alert       = ${target.topics.post_alert || "(unset)"}`,
     ].join("\n"),
   );
 });
@@ -79,13 +86,28 @@ bot.command("status", async (ctx) => {
   await ctx.reply(
     [
       "smart-filter-gmgn status",
-      `chat:        ${target.chatId || "(not set — run /setup)"}`,
-      `new_pair:    ${target.topics.new_pair || "(not set)"}`,
-      `sleeper:     ${target.topics.sleeper || "(not set)"}`,
-      `post_alert:  ${target.topics.post_alert || "(not set)"}`,
+      `chat:             ${target.chatId || "(not set — run /setup)"}`,
+      `before_migrated:  ${target.topics.before_migrated || "(not set)"}`,
+      `after_migrated:   ${target.topics.after_migrated || "(not set)"}`,
+      `sleeper:          ${target.topics.sleeper || "(not set)"}`,
+      `post_alert:       ${target.topics.post_alert || "(not set)"}`,
     ].join("\n"),
   );
 });
+
+const ALL_PIPELINES: Pipeline[] = ["before_migrated", "after_migrated", "sleeper"];
+const PIPELINE_ALIASES: Record<string, Pipeline | "all"> = {
+  before: "before_migrated",
+  before_migrated: "before_migrated",
+  pre: "before_migrated",
+  pre_migrated: "before_migrated",
+  after: "after_migrated",
+  after_migrated: "after_migrated",
+  post: "after_migrated",
+  post_migrated: "after_migrated",
+  sleeper: "sleeper",
+  all: "all",
+};
 
 bot.command(["backtest", "review"], async (ctx) => {
   const parts = ctx.message.text.split(/\s+/).slice(1);
@@ -93,22 +115,20 @@ bot.command(["backtest", "review"], async (ctx) => {
   const windowArg = (parts[1] ?? "24h").toLowerCase();
   const windowMs = parseWindow(windowArg);
   if (!windowMs) {
-    await ctx.reply("Usage: /backtest [new_pair|sleeper|all] [24h|3d|7d|14d]");
+    await ctx.reply(
+      "Usage: /backtest [before_migrated|after_migrated|sleeper|all] [24h|3d|7d|14d]",
+    );
+    return;
+  }
+  const resolved = PIPELINE_ALIASES[pipelineArg];
+  if (!resolved) {
+    await ctx.reply(`Unknown pipeline '${pipelineArg}'. Try: ${Object.keys(PIPELINE_ALIASES).join(", ")}.`);
     return;
   }
   const toMs = Date.now();
   const fromMs = toMs - windowMs;
-  await ctx.reply(`Running backtest (${pipelineArg}, ${windowArg})…`);
-  const pipelines: ("new_pair" | "sleeper")[] =
-    pipelineArg === "all"
-      ? ["new_pair", "sleeper"]
-      : pipelineArg === "new_pair" || pipelineArg === "sleeper"
-        ? [pipelineArg]
-        : [];
-  if (pipelines.length === 0) {
-    await ctx.reply("Unknown pipeline. Use new_pair | sleeper | all.");
-    return;
-  }
+  const pipelines: Pipeline[] = resolved === "all" ? [...ALL_PIPELINES] : [resolved];
+  await ctx.reply(`Running backtest (${pipelines.join(", ")}, ${windowArg})…`);
   for (const p of pipelines) {
     await runAndSendDigest({ pipeline: p, fromMs, toMs }, ctx.message.message_id);
   }
@@ -135,8 +155,6 @@ bot.action(/mute:(.+)/, async (ctx) => {
 });
 
 bot.action(/watch:(.+)/, async (ctx) => {
-  // Watchlist add via Telegraf is owned by the post-alert watcher;
-  // here we only acknowledge so the button doesn't hang.
   await ctx.answerCbQuery("Already on the alert pipeline");
 });
 

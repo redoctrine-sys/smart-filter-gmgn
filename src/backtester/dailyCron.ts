@@ -39,7 +39,7 @@ export function startDailyCron(): void {
       try {
         const toMs = Date.now();
         const fromMs = toMs - ONE_DAY_MS;
-        for (const p of ["new_pair", "sleeper"] as const) {
+        for (const p of ["before_migrated", "after_migrated", "sleeper"] as const) {
           await runAndSendDigest({ pipeline: p, fromMs, toMs });
         }
       } catch (err) {

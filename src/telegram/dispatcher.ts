@@ -18,16 +18,19 @@ import {
 } from "../utils/format.js";
 import type { TokenSnapshot } from "../gmgn/types.js";
 import type { FilterDecision } from "../filter/types.js";
+import type { Pipeline } from "../capture/snapshotter.js";
 
-type Pipeline = "new_pair" | "sleeper" | "post_alert";
+type DispatchTopic = Pipeline | "post_alert";
 
-function topicId(pipeline: Pipeline): number | undefined {
+function topicId(t: DispatchTopic): number | undefined {
   const raw =
-    pipeline === "new_pair"
-      ? target.topics.new_pair
-      : pipeline === "sleeper"
-        ? target.topics.sleeper
-        : target.topics.post_alert;
+    t === "before_migrated"
+      ? target.topics.before_migrated
+      : t === "after_migrated"
+        ? target.topics.after_migrated
+        : t === "sleeper"
+          ? target.topics.sleeper
+          : target.topics.post_alert;
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
@@ -42,15 +45,28 @@ interface AlertExtras {
   copycatSimilarity?: number;
 }
 
+function pipelineHeading(pipeline: Pipeline): string {
+  switch (pipeline) {
+    case "before_migrated":
+      return "🌱 *BEFORE MIGRATED*";
+    case "after_migrated":
+      return "🚀 *AFTER MIGRATED*";
+    case "sleeper":
+      return "😴 *SLEEPER*";
+  }
+}
+
 function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertExtras): string {
   const s = snap.summary;
   const sec = snap.security;
+  const c = snap.candles;
   const lines: string[] = [];
-  const head = decision.pipeline === "new_pair" ? "🆕 *NEW PAIR*" : "😴 *SLEEPER*";
-  lines.push(`${head} — *${escapeMarkdownV2(s.symbol || "?")}*  \`${escapeMarkdownV2(s.name)}\``);
+  lines.push(`${pipelineHeading(decision.pipeline)} — *${escapeMarkdownV2(s.symbol || "?")}*  \`${escapeMarkdownV2(s.name)}\``);
   lines.push(`CA: \`${s.ca}\``);
   lines.push("");
-  lines.push(`MC: ${escapeMarkdownV2(formatUsd(s.marketCapUsd))} · LP: ${escapeMarkdownV2(formatUsd(s.liquidityUsd))} · Age: ${escapeMarkdownV2(s.ageHours ? s.ageHours.toFixed(1) + "h" : "—")}`);
+  lines.push(
+    `MC: ${escapeMarkdownV2(formatUsd(s.marketCapUsd))} · LP: ${escapeMarkdownV2(formatUsd(s.liquidityUsd))} · Age: ${escapeMarkdownV2(s.ageHours ? s.ageHours.toFixed(1) + "h" : "—")}`,
+  );
   lines.push(
     `Vol 5m/1h/24h: ${escapeMarkdownV2(formatUsd(s.volume5mUsd))} / ${escapeMarkdownV2(formatUsd(s.volume1hUsd))} / ${escapeMarkdownV2(formatUsd(s.volume24hUsd))}`,
   );
@@ -60,10 +76,26 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertE
   lines.push(
     `Fee: ${escapeMarkdownV2(formatSol(sec.globalFeeSol))} \\(${escapeMarkdownV2(sec.globalFeeStatus)}\\) · DexPaid: ${escapeMarkdownV2(sec.dexPaidStatus)}`,
   );
+
+  // TA strip — relevant when chart has settled (after_migrated + sleeper most useful)
+  const taParts: string[] = [];
+  if (c.dropFromAthPct !== null) {
+    taParts.push(`Drop from ATH: ${escapeMarkdownV2((c.dropFromAthPct * 100).toFixed(1))}%`);
+  }
+  if (c.stochRsiK !== null) {
+    const sig = c.stochRsiSignal ?? "neutral";
+    const flag = c.stochRsiSafe ? "✅" : "⚠️";
+    taParts.push(`StochRSI: ${escapeMarkdownV2(c.stochRsiK.toFixed(0))} ${flag} \\(${escapeMarkdownV2(sig)}\\)`);
+  }
+  if (c.last3GreenInARow) taParts.push("3🟢 candle confirm");
+  if (c.nearFib786) taParts.push("Fib 0\\.786 zone");
+  if (taParts.length > 0) lines.push(taParts.join(" · "));
+
   if (extras.narrative !== undefined) {
     lines.push(`Narrative: ${escapeMarkdownV2(extras.narrative.toFixed(1))}/10`);
   }
-  if (decision.pipeline === "new_pair") {
+
+  if (decision.pipeline !== "sleeper") {
     const verdicts: string[] = [];
     if (extras.clusterSize !== undefined) {
       if (extras.isOldestInCluster) {
@@ -84,6 +116,7 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertE
     }
     if (verdicts.length > 0) lines.push(verdicts.join(" · "));
   }
+
   const wc = snap.walletComposition;
   if (wc.top10.n > 0 || wc.top100.n > 0) {
     lines.push(
@@ -96,7 +129,7 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertE
     );
   }
   lines.push("");
-  lines.push(`Score: *${decision.score}/100* \\(threshold ${decision.threshold}\\)`);
+  lines.push(`Score: *${decision.score}* \\(threshold ${decision.threshold}\\)`);
   const passing = decision.scoreEvals.concat(decision.boosterEvals).filter((e) => e.passed);
   if (passing.length > 0) {
     lines.push(
@@ -105,7 +138,9 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertE
     );
   }
   lines.push("");
-  lines.push(`[GMGN](${gmgnTokenLink(s.ca)}) · [Dex](${dexscreenerLink(s.ca)}) · [Solscan](${solscanLink(s.ca)})`);
+  lines.push(
+    `[GMGN](${gmgnTokenLink(s.ca)}) · [Dex](${dexscreenerLink(s.ca)}) · [Solscan](${solscanLink(s.ca)})`,
+  );
   return lines.join("\n");
 }
 
@@ -115,7 +150,7 @@ export interface DispatchResult {
 }
 
 export async function sendAlert(
-  pipeline: "new_pair" | "sleeper",
+  pipeline: Pipeline,
   snap: TokenSnapshot,
   decision: FilterDecision,
   extras: AlertExtras = {},
@@ -145,10 +180,7 @@ export async function sendAlert(
     });
     return { messageId: msg.message_id, threadId: thread ?? null };
   } catch (err) {
-    logger.error(
-      { err: String(err), ca: snap.summary.ca, pipeline },
-      "sendAlert failed",
-    );
+    logger.error({ err: String(err), ca: snap.summary.ca, pipeline }, "sendAlert failed");
     return { messageId: null, threadId: null };
   }
 }

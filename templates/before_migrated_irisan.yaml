@@ -1,0 +1,42 @@
+# =====================================================================
+# BEFORE MIGRATED — fresh launches still on the bonding curve
+# (Pump.fun / Bonkfun / Moonshot etc, MC sub 3-10K, chaos PvP).
+#
+# Source: synthesis of @ELPonyin (Vol.2 instant scalping), @badidoyo
+# (must-have on-chain checklist + TOKEN AGE = OLDEST), @Andri_Snnn
+# (bundler warning), @PradonoNovaldo (clean ijo + limit order).
+#
+# TA at this phase is minimal — Ponyin verbatim "gambarnya belum selesai
+# coinnya udah rug duluan" — so the score is heavily on-chain.
+# =====================================================================
+id: before_migrated_irisan
+name: "Irisan Before Migrated (Pump.fun bonding)"
+pipeline: before_migrated
+score_threshold: 75
+
+hard_rules:
+  - { metric: migration_status,    op: equals, value: bonding }
+  - { metric: mint_authority,      op: equals, value: revoked }
+  - { metric: freeze_authority,    op: equals, value: revoked }
+  - { metric: top_10_holder_pct,   op: lt,     value: 25 }
+  - { metric: socials_count,       op: gte,    value: 1 }
+  - { metric: dev_holding_pct,     op: equals, value: 0 }
+  - { metric: honeypot,            op: equals, value: false }
+
+scoring:
+  # On-chain integrity is paramount in this phase.
+  - { metric: bundler_pct,                op: lt,    value: 5,    points: 30 }   # Badidoyo cluster <5%, Ponyin Multiwallet
+  - { metric: global_fee_sol,             op: gt,    value: 1,    points: 25 }   # Badidoyo verbatim
+  - { metric: top1_holder_balance_sol,    op: gte,  value: 0.5,  points: 15 }   # Ponyin "balance ≥ 0.5 SOL"
+  - { metric: insider_holder_pct,         op: lt,    value: 5,    points: 15 }
+  - { metric: age_minutes,                op: lt,    value: 30,   points: 15 }   # very fresh = better entry
+  - { metric: candle_confirm_3_green,     op: equals, value: true, points: 10 }  # Ponyin 3-candle confirm
+
+boosters:
+  - { metric: smart_money_buys,           op: gte,   value: 2,    points: 10 }
+  - { metric: dex_paid_status,            op: equals, value: paid, points: 10 }
+  # Token Age = OLDEST in narrative cluster (badidoyo "MUST HAVE: TOKEN AGE = OLDEST")
+  - { metric: is_oldest_in_cluster,       op: equals, value: true, points: 10 }
+  - { metric: is_copycat_of_runner,       op: equals, value: false, points: 10 }
+  # Volume confirmation (any organic flow at this stage is a positive)
+  - { metric: volume_5m_usd,              op: gte,   value: 2000, points: 10 }

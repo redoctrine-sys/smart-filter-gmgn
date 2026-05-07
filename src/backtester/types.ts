@@ -1,6 +1,9 @@
+import type { Pipeline } from "../capture/snapshotter.js";
 import type { FilterDecision } from "../filter/types.js";
 
 export type CallStatus = "triggered" | "almost";
+
+export type { Pipeline };
 
 export type Outcome =
   | "tp_2x"
@@ -17,7 +20,7 @@ export type Outcome =
 export interface SimulatedCall {
   ca: string;
   symbol: string;
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   templateId: string;
   status: CallStatus;
   score: number;
@@ -49,7 +52,7 @@ export interface ReviewedCall extends SimulatedCall {
 export interface BacktestSummary {
   windowFrom: number;
   windowTo: number;
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   templateId: string;
   threshold: number;
   totalCalls: number;

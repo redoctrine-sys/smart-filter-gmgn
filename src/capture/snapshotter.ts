@@ -22,8 +22,10 @@ import { logger } from "../utils/logger.js";
  * with a different template if needed).
  */
 
+export type Pipeline = "before_migrated" | "after_migrated" | "sleeper";
+
 interface PipelineCfg {
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   template: FilterTemplate;
 }
 
@@ -44,19 +46,21 @@ function nextCaptureAt(firstSeenAt: number, ageMin: number): number | null {
 
 export class Snapshotter {
   private timer: NodeJS.Timeout | null = null;
-  private readonly pipelines: Record<"new_pair" | "sleeper", PipelineCfg>;
+  private readonly pipelines: Record<Pipeline, PipelineCfg>;
 
   constructor() {
-    const np = loadTemplate(env.TEMPLATE_NEW_PAIR);
-    const sl = loadTemplate(env.TEMPLATE_SLEEPER);
+    const before = loadTemplate(env.TEMPLATE_BEFORE_MIGRATED);
+    const after = loadTemplate(env.TEMPLATE_AFTER_MIGRATED);
+    const sleeper = loadTemplate(env.TEMPLATE_SLEEPER);
     this.pipelines = {
-      new_pair: { pipeline: "new_pair", template: np },
-      sleeper: { pipeline: "sleeper", template: sl },
+      before_migrated: { pipeline: "before_migrated", template: before },
+      after_migrated: { pipeline: "after_migrated", template: after },
+      sleeper: { pipeline: "sleeper", template: sleeper },
     };
   }
 
   /** Called by pipelines on first sighting of a token. */
-  register(ca: string, pipeline: "new_pair" | "sleeper"): void {
+  register(ca: string, pipeline: Pipeline): void {
     const now = Date.now();
     const firstNext = now + SCHEDULE_BUCKETS[0]!.intervalMin * 60_000;
     captureScheduleRepo.upsert(ca, pipeline, now, firstNext);
@@ -85,7 +89,7 @@ export class Snapshotter {
     if (due.length === 0) return;
 
     for (const row of due) {
-      const cfg = this.pipelines[row.pipeline as "new_pair" | "sleeper"];
+      const cfg = this.pipelines[row.pipeline as Pipeline];
       if (!cfg) {
         captureScheduleRepo.finish(row.ca, row.pipeline);
         continue;

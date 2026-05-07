@@ -15,19 +15,29 @@ import { detectCluster, detectCopycat } from "../narrative/copycat.js";
 import { sendAlert } from "../telegram/dispatcher.js";
 import { logger } from "../utils/logger.js";
 
-const PIPELINE = "new_pair";
+const PIPELINE = "before_migrated";
 
-export class NewPairPipeline {
+/**
+ * Pre-migration phase — fresh launches still on the bonding curve
+ * (Pump.fun / Bonkfun / Moonshot etc).
+ *
+ * Polls v1/sol/tokens/new_pair, ignores anything whose migration_status is
+ * not `bonding`, and runs them through the before_migrated_irisan template.
+ */
+export class BeforeMigratedPipeline {
   private readonly engine: FilterEngine;
   private timer: NodeJS.Timeout | null = null;
 
   constructor() {
-    const tpl = loadTemplate(env.TEMPLATE_NEW_PAIR);
-    if (tpl.pipeline !== "new_pair") {
-      throw new Error(`Template ${tpl.id} is not for new_pair pipeline`);
+    const tpl = loadTemplate(env.TEMPLATE_BEFORE_MIGRATED);
+    if (tpl.pipeline !== "before_migrated") {
+      throw new Error(`Template ${tpl.id} is not for before_migrated pipeline`);
     }
     this.engine = new FilterEngine(tpl);
-    logger.info({ template: tpl.id, threshold: tpl.score_threshold }, "new_pair pipeline ready");
+    logger.info(
+      { template: tpl.id, threshold: tpl.score_threshold },
+      "before_migrated pipeline ready",
+    );
   }
 
   start(): void {
@@ -35,9 +45,9 @@ export class NewPairPipeline {
       try {
         await this.runOnce();
       } catch (err) {
-        logger.error({ err: String(err) }, "new_pair tick failed");
+        logger.error({ err: String(err) }, "before_migrated tick failed");
       } finally {
-        this.timer = setTimeout(tick, env.NEW_PAIR_POLL_MS);
+        this.timer = setTimeout(tick, env.BEFORE_MIGRATED_POLL_MS);
       }
     };
     void tick();
@@ -49,7 +59,7 @@ export class NewPairPipeline {
   }
 
   private async runOnce(): Promise<void> {
-    const candidates = await gmgnClient.fetchNewPairs({ limit: 60 });
+    const candidates = await gmgnClient.fetchNewPairs({ limit: 80 });
     if (candidates.length === 0) return;
 
     for (const shallow of candidates) {
@@ -58,15 +68,15 @@ export class NewPairPipeline {
       if (mutedRepo.is(ca)) continue;
       if (tokensSeenRepo.has(ca, PIPELINE)) continue;
 
-      // Register for periodic snapshot capture (backtester data) the moment
-      // we first see this CA, regardless of whether it ends up alerting.
       snapshotter.register(ca, PIPELINE);
 
       const enriched = await gmgnClient.enrich(ca);
       if (!enriched) continue;
-      const smartMoney = await gmgnClient.smartMoneyBuysLastHour(ca);
 
-      // Record metadata for narrative cluster + record runners across pipelines.
+      // Skip non-bonding tokens — they'll be picked up by after_migrated
+      if (enriched.summary.migrationStatus !== "bonding") continue;
+
+      const smartMoney = await gmgnClient.smartMoneyBuysLastHour(ca);
       const firstSeenAt = Date.now();
       recentTokenMetaRepo.upsert({
         ca,
@@ -97,19 +107,12 @@ export class NewPairPipeline {
       const decision = this.engine.evaluate(metrics);
 
       if (!decision.passed) {
-        if (decision.reason === "hard_rule_failed") {
-          tokensSeenRepo.mark(ca, PIPELINE);
-        } else {
-          logger.debug(
-            { ca, score: decision.score, threshold: decision.threshold },
-            "new_pair below threshold (will reconsider next tick)",
-          );
-        }
+        if (decision.reason === "hard_rule_failed") tokensSeenRepo.mark(ca, PIPELINE);
         continue;
       }
 
       tokensSeenRepo.mark(ca, PIPELINE);
-      const result = await sendAlert("new_pair", enriched, decision, {
+      const result = await sendAlert("before_migrated", enriched, decision, {
         isOldestInCluster: cluster.isOldestInCluster,
         clusterSize: cluster.clusterSize,
         isCopycatOfRunner: copycat.isCopycatOfRunner,
@@ -134,7 +137,7 @@ export class NewPairPipeline {
       });
       logger.info(
         { ca, score: decision.score, mc: enriched.summary.marketCapUsd },
-        "new_pair ALERT",
+        "before_migrated ALERT",
       );
     }
   }

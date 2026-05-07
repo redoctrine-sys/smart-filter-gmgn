@@ -1,3 +1,4 @@
+import type { Pipeline } from "../capture/snapshotter.js";
 import { snapshotsRepo, type HistoricalSnapshotRow } from "../db/repos.js";
 import type { FilterDecision } from "../filter/types.js";
 import type { CallStatus, SimulatedCall } from "./types.js";
@@ -15,7 +16,7 @@ import type { CallStatus, SimulatedCall } from "./types.js";
  * (they belong to the exit simulator, not to call generation).
  */
 export function findSimulatedCalls(args: {
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   fromMs: number;
   toMs: number;
   threshold: number;

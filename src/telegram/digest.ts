@@ -1,5 +1,6 @@
 import { Input } from "telegraf";
 import { bot, target } from "./bot.js";
+import type { Pipeline } from "../capture/snapshotter.js";
 import { callsToCsv } from "../backtester/csvExport.js";
 import { review } from "../backtester/reviewer.js";
 import { simulateExit } from "../backtester/exitSim.js";
@@ -11,11 +12,23 @@ import type { BacktestSummary, Outcome, ReviewedCall } from "../backtester/types
 import { logger } from "../utils/logger.js";
 
 interface DigestArgs {
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   fromMs: number;
   toMs: number;
   almostBand?: number;
 }
+
+const DIGEST_TEMPLATE_PATH: Record<Pipeline, () => string> = {
+  before_migrated: () => env.TEMPLATE_BEFORE_MIGRATED,
+  after_migrated: () => env.TEMPLATE_AFTER_MIGRATED,
+  sleeper: () => env.TEMPLATE_SLEEPER,
+};
+
+const DIGEST_HEADING: Record<Pipeline, string> = {
+  before_migrated: "🌱 *BEFORE MIGRATED DIGEST*",
+  after_migrated: "🚀 *AFTER MIGRATED DIGEST*",
+  sleeper: "😴 *SLEEPER DIGEST*",
+};
 
 const POST_ALERT_TOPIC = () => target.topics.post_alert;
 
@@ -27,7 +40,7 @@ export async function runAndSendDigest(args: DigestArgs, replyTo?: number): Prom
   const summary = review(args);
 
   // Build full call list (re-run cheap path) so we can attach the CSV.
-  const tplPath = args.pipeline === "new_pair" ? env.TEMPLATE_NEW_PAIR : env.TEMPLATE_SLEEPER;
+  const tplPath = DIGEST_TEMPLATE_PATH[args.pipeline]();
   const tpl = loadTemplate(tplPath);
   const calls = findSimulatedCalls({
     pipeline: args.pipeline,
@@ -63,7 +76,7 @@ export async function runAndSendDigest(args: DigestArgs, replyTo?: number): Prom
 }
 
 function formatDigest(s: BacktestSummary): string {
-  const head = s.pipeline === "new_pair" ? "🆕 *NEW PAIR DIGEST*" : "😴 *SLEEPER DIGEST*";
+  const head = DIGEST_HEADING[s.pipeline];
   const fromIso = new Date(s.windowFrom).toISOString().slice(0, 16).replace("T", " ");
   const toIso = new Date(s.windowTo).toISOString().slice(0, 16).replace("T", " ");
   const lines: string[] = [];

@@ -1,8 +1,14 @@
 # smart-filter-gmgn
 
-Real-time Solana meme coin smart filter built on top of the **GMGN Agent API**, with two parallel pipelines (**New Pair** and **Sleeper**), a hybrid filter engine (hard rules + weighted scoring), and a post-alert watcher (TP / SL / anti-rug). Alerts are pushed to Telegram with one-click links to **Trojan** and **Jupiter**.
+Real-time Solana meme coin smart filter built on top of the **GMGN Agent API**, with **three parallel pipelines** keyed off the migration phase, a hybrid filter engine (hard rules + weighted scoring), and a post-alert watcher (TP / SL / anti-rug). Alerts are pushed to Telegram with one-click links to **Trojan** and **Jupiter**.
 
-The filter thresholds are derived from a synthesis of strategies from four Indonesian degen Solana traders (@ELPonyin, @badidoyo, @Andri_Snnn, @PradonoNovaldo). See `templates/*.yaml`.
+| Pipeline | Phase | Source | Default poll | Default threshold |
+|---|---|---|---|---|
+| `before_migrated` | Pump.fun bonding curve (chaos PvP) | `v1/sol/tokens/new_pair` | 4 s | 75 |
+| `after_migrated` | Just migrated to Raydium (post-dump reversal sweet spot) | `v1/sol/tokens/migrated` (fallback `scanner`) | 8 s | 80 |
+| `sleeper` | Low-cap slowcook (MC 7K-25K, narrative play) | `v1/sol/tokens/scanner` | 60 s | 70 |
+
+The filter weights are derived from a synthesis of strategies from four Indonesian degen Solana traders (@ELPonyin, @badidoyo, @Andri_Snnn, @PradonoNovaldo). See `templates/*.yaml`.
 
 > **Disclaimer.** Not financial advice. Solana trenches are PvP. Trade with cold money. DYOR.
 
@@ -13,11 +19,12 @@ The filter thresholds are derived from a synthesis of strategies from four Indon
 ```
 GMGN Agent API
       │
-      ├─ New Pair pipeline   (poll 3-5s)  ─┐
-      ├─ Sleeper pipeline    (poll 60s)   ─┼─▶ Filter engine ─▶ Telegram alert
-      └─ Post-alert watcher  (poll 5s→60s) ┘                       │
-                                                                   ▼
-                                                        TP / SL / Anti-rug
+      ├─ before_migrated  (poll 4s)   ─┐
+      ├─ after_migrated   (poll 8s)   ─┤
+      ├─ sleeper          (poll 60s)  ─┼─▶ Filter engine ─▶ Telegram alert
+      └─ post_alert       (poll 5s→60s)┘                      │
+                                                              ▼
+                                                  TP / SL / Anti-rug
 ```
 
 - **Stack**: Node.js 20 + TypeScript, Telegraf, better-sqlite3, Gemini (narrative).
@@ -47,9 +54,9 @@ There is also a public read-only test key: `gmgn_solbscbaseethmonadtron` — use
 ### 3. Telegram bot
 1. Create a bot via [@BotFather](https://t.me/BotFather) → copy the token to `TELEGRAM_BOT_TOKEN`.
 2. Create a **supergroup** with **topics enabled**, and add the bot as admin (with permission to send messages in topics).
-3. Create three topics: `🆕 New Pair Alerts`, `😴 Sleeper Alerts`, `📡 Post-Alert (TP/SL/Rug)`.
-4. Run the bot once (`pnpm dev`) and inside the supergroup type `/setup` (in General). The bot replies with the chat id.
-5. Inside each topic thread, type `/setup new_pair`, `/setup sleeper`, `/setup post_alert` respectively. The bot persists IDs in SQLite so subsequent restarts auto-detect them.
+3. Create four topics: `🌱 Before Migrated`, `🚀 After Migrated`, `😴 Sleeper`, `📡 Post-Alert (TP/SL/Rug)`.
+4. Run the bot once (`npm run dev`) and inside the supergroup type `/setup` (in General). The bot replies with the chat id.
+5. Inside each topic thread, type `/setup before_migrated`, `/setup after_migrated`, `/setup sleeper`, `/setup post_alert`. The bot persists IDs in SQLite so subsequent restarts auto-detect them.
 
 ### 4. Gemini API (Sleeper narrative scoring)
 - Free key: <https://aistudio.google.com/apikey>
@@ -89,10 +96,19 @@ pnpm build && pnpm start   # production
 
 Templates live in `templates/`:
 
-| File | Pipeline | Threshold | Notes |
+| File | Pipeline | Threshold | Highlights |
 |---|---|---|---|
-| `new_pair_irisan.yaml` | new_pair | 70 | Hard: mint/freeze revoked, top10 < 25%, dev = 0%, socials ≥ 1, 3 candle confirm |
-| `sleeper_irisan.yaml`  | sleeper  | 65 | Hard: MC 7K-25K, age > 24h, mint/freeze revoked, socials ≥ 1 |
+| `before_migrated_irisan.yaml` | `before_migrated` | 75 | Hard: bonding + mint/freeze revoked + dev=0% + top10<25%. Score-heavy on-chain (bundler<5%=+30, fee>1 SOL=+25, age<30min=+15). TA minimal. |
+| `after_migrated_irisan.yaml`  | `after_migrated`  | 80 | Hard: migrated + drop_from_ath ≤-50%. Balanced: drop ≤-70%=+25, 3-candle=+20, Fib 0.786=+20, Stoch RSI safe=+15. |
+| `sleeper_irisan.yaml`         | `sleeper`         | 70 | Hard: MC 7K-25K + age>24h. Narrative=+25, volume spike 3×=+20, holder stacked=+15, Fib=+15. |
+
+### Re-weighting summary (Mei 2026 update)
+
+The weights reflect what each phase rewards in practice:
+
+- **Before Migrated**: TA is unreliable here ("gambarnya belum selesai" — Ponyin). Score is dominated by on-chain integrity and freshness, plus the badidoyo "TOKEN AGE = OLDEST" booster.
+- **After Migrated**: TA actually works — combines Ponyin's 3-candle confirm, badidoyo's Fib 0.786, and Andri's "RSI atas tunggu turun" (Stoch RSI dropping from overbought) on top of post-dump entry zone (drop_from_ath ≤-70%).
+- **Sleeper**: Narrative + volume spike + meme dominate, with TA as confirmation.
 
 Edit YAML → restart bot. To swap templates without code changes, point `TEMPLATE_NEW_PAIR` / `TEMPLATE_SLEEPER` at a different file.
 
@@ -132,9 +148,22 @@ top100_buy_sell_ratio`.
 Plus **volume** metrics (raw USD turnover, useful for "organic volume + global fee" checks):
 `volume_5m_usd, volume_1h_usd, volume_24h_usd`.
 
-Plus **narrative cluster + copycat** metrics for the New Pair pipeline (see "Narrative cluster + copycat" below):
+Plus **narrative cluster + copycat** metrics (see "Narrative cluster + copycat" below):
 `is_oldest_in_cluster, cluster_size, earlier_similar_count,
 is_copycat_of_runner, copycat_similarity, copycat_runner_symbol`.
+
+Plus **migration + technical analysis** metrics (mostly used by `after_migrated` and `sleeper`):
+
+| Metric | Source |
+|---|---|
+| `migration_status` | `bonding` / `migrated` / `unknown` derived from launchpad + `migrated_at` flag |
+| `age_minutes` | `age_hours * 60`, used by `before_migrated` for "very fresh" rules |
+| `ath_price_usd`, `drop_from_ath_pct` | computed on the 5m kline (8h window). `drop_from_ath_pct` is negative when below ATH; `≤ -0.7` = 70%+ dump zone. |
+| `candle_confirm_3_green` | last 3 closes > opens on the 1m TF (Ponyin) |
+| `near_fib_786` | last close within ±5% of `high - (high-low)*0.786` on 5m TF (badidoyo) |
+| `stoch_rsi_k`, `stoch_rsi_signal` | Stochastic RSI %K (0-100) on 5m closes; signal ∈ {`overbought`, `oversold`, `dropping_from_overbought`, `rising_from_oversold`, `neutral`} |
+| `stoch_rsi_safe` | true when `k < 80` OR signal === `dropping_from_overbought` (Andri "RSI atas tunggu turun") |
+| `stoch_rsi_overbought`, `stoch_rsi_oversold` | convenience booleans for sharper rules |
 
 ---
 
@@ -271,11 +300,14 @@ Fires at **08:00 Asia/Jakarta** (WIB) covering the trailing 24 hours, both pipel
 
 ### On-demand
 ```
-/backtest                 # all pipelines, last 24h
-/backtest new_pair 7d     # new pair pipeline, last 7 days
-/backtest sleeper 3d      # sleeper pipeline, last 3 days
-/review all 14h           # alias of /backtest
+/backtest                          # all 3 pipelines, last 24h
+/backtest before_migrated 7d       # before_migrated only, last 7 days
+/backtest after_migrated 3d        # after_migrated only, last 3 days
+/backtest sleeper 14d              # sleeper only, last 14 days
+/review all 12h                    # alias of /backtest
 ```
+
+Aliases accepted: `before` / `pre` for `before_migrated`, `after` / `post` for `after_migrated`.
 
 Window grammar: `Nh` (hours) or `Nd` (days), e.g. `12h`, `3d`, `7d`.
 

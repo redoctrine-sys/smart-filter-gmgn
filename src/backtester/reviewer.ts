@@ -1,3 +1,4 @@
+import type { Pipeline } from "../capture/snapshotter.js";
 import { loadTemplate } from "../filter/templates.js";
 import { env } from "../config/env.js";
 import { findSimulatedCalls } from "./engine.js";
@@ -9,6 +10,12 @@ import type {
   PipelineStats,
   ReviewedCall,
 } from "./types.js";
+
+const TEMPLATE_PATH_BY_PIPELINE: Record<Pipeline, () => string> = {
+  before_migrated: () => env.TEMPLATE_BEFORE_MIGRATED,
+  after_migrated: () => env.TEMPLATE_AFTER_MIGRATED,
+  sleeper: () => env.TEMPLATE_SLEEPER,
+};
 
 const ALL_OUTCOMES: Outcome[] = [
   "tp_2x",
@@ -26,7 +33,7 @@ const ALL_OUTCOMES: Outcome[] = [
 const ALMOST_BAND_DEFAULT = env.BACKTEST_ALMOST_BAND;
 
 export interface ReviewOptions {
-  pipeline: "new_pair" | "sleeper";
+  pipeline: Pipeline;
   fromMs: number;
   toMs: number;
   almostBand?: number;
@@ -34,9 +41,7 @@ export interface ReviewOptions {
 }
 
 export function review(opts: ReviewOptions): BacktestSummary {
-  const tplPath =
-    opts.templatePath ??
-    (opts.pipeline === "new_pair" ? env.TEMPLATE_NEW_PAIR : env.TEMPLATE_SLEEPER);
+  const tplPath = opts.templatePath ?? TEMPLATE_PATH_BY_PIPELINE[opts.pipeline]();
   const tpl = loadTemplate(tplPath);
   const almostBand = opts.almostBand ?? ALMOST_BAND_DEFAULT;
 

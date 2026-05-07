@@ -17,7 +17,8 @@ const envSchema = z.object({
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_CHAT_ID: z.string().optional().default(""),
-  TELEGRAM_TOPIC_NEW_PAIR: z.string().optional().default(""),
+  TELEGRAM_TOPIC_BEFORE_MIGRATED: z.string().optional().default(""),
+  TELEGRAM_TOPIC_AFTER_MIGRATED: z.string().optional().default(""),
   TELEGRAM_TOPIC_SLEEPER: z.string().optional().default(""),
   TELEGRAM_TOPIC_POST_ALERT: z.string().optional().default(""),
 
@@ -30,12 +31,14 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().default("gemini-2.0-flash"),
 
   // Polling
-  NEW_PAIR_POLL_MS: numStr(4000),
+  BEFORE_MIGRATED_POLL_MS: numStr(4000),
+  AFTER_MIGRATED_POLL_MS: numStr(8000),
   SLEEPER_POLL_MS: numStr(60000),
   POST_ALERT_POLL_MS: numStr(5000),
   POST_ALERT_ESCALATE_AFTER_HOURS: numStr(6),
   POST_ALERT_ESCALATED_POLL_MS: numStr(60000),
   POST_ALERT_LIFECYCLE_HOURS: numStr(24),
+  AFTER_MIGRATED_MAX_AGE_HOURS: numStr(6),
 
   // Rate limiter
   GMGN_INITIAL_RPS: numStr(4),
@@ -58,7 +61,12 @@ const envSchema = z.object({
   // Misc
   LOG_LEVEL: z.string().default("info"),
   DB_PATH: z.string().default("./data/state.db"),
-  TEMPLATE_NEW_PAIR: z.string().default("./templates/new_pair_irisan.yaml"),
+  TEMPLATE_BEFORE_MIGRATED: z
+    .string()
+    .default("./templates/before_migrated_irisan.yaml"),
+  TEMPLATE_AFTER_MIGRATED: z
+    .string()
+    .default("./templates/after_migrated_irisan.yaml"),
   TEMPLATE_SLEEPER: z.string().default("./templates/sleeper_irisan.yaml"),
   SMART_MONEY_CSV: z.string().default("./data/smart_money_wallets.csv"),
 });

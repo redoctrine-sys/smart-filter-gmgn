@@ -4,6 +4,8 @@
  * from the wire format.
  */
 
+export type MigrationStatus = "bonding" | "migrated" | "unknown";
+
 export interface TokenSummary {
   ca: string;
   symbol: string;
@@ -13,6 +15,7 @@ export interface TokenSummary {
   socials: { twitter?: string; telegram?: string; website?: string };
   socialsCount: number;
   launchpad: string;
+  migrationStatus: MigrationStatus;
   marketCapUsd: number | null;
   priceUsd: number | null;
   ageHours: number | null;
@@ -38,11 +41,19 @@ export interface TokenSecurity {
   dexPaidStatus: "paid" | "unpaid" | "unknown";
 }
 
+import type { StochRsiSignal } from "./indicators.js";
+
 export interface CandleSnapshot {
   last3GreenInARow: boolean;
   lastClose: number | null;
   fib786Level?: number | null;
   nearFib786: boolean;
+  athPriceUsd: number | null;
+  dropFromAthPct: number | null; // negative when below ATH
+  stochRsiK: number | null;
+  stochRsiSignal: StochRsiSignal | null;
+  /** k < 80 OR signal === "dropping_from_overbought" — Andri's "RSI atas tunggu turun". */
+  stochRsiSafe: boolean;
 }
 
 export interface HolderSnapshot {

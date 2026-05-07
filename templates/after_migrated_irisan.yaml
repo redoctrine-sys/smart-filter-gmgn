@@ -1,0 +1,46 @@
+# =====================================================================
+# AFTER MIGRATED — token already bonded and migrated to Raydium, now in
+# the post-dump reversal zone (sniper/insider exit ~80% from ATH).
+#
+# Sweet spot the user's analysis emphasizes most: TA actually works here
+# because the chart has settled. Score is balanced on-chain + TA.
+#
+# Verbatim sources:
+# - Ponyin "3 Konfirmasi Candle" (1m/5m TF)
+# - Badidoyo "Fib 0.786 retracement" entry zone after ~80% drop
+# - Andri "RSI atas tunggu turun" — Stoch RSI must not be overbought
+#   (or must be visibly dropping from overbought)
+# - Pradono "limit order, jgn haka" + Fib extension exit
+# =====================================================================
+id: after_migrated_irisan
+name: "Irisan After Migrated (Raydium reversal sweet spot)"
+pipeline: after_migrated
+score_threshold: 80
+
+hard_rules:
+  - { metric: migration_status,    op: equals, value: migrated }
+  - { metric: mint_authority,      op: equals, value: revoked }
+  - { metric: freeze_authority,    op: equals, value: revoked }
+  - { metric: socials_count,       op: gte,    value: 1 }
+  - { metric: honeypot,            op: equals, value: false }
+  # ≥ 50% drop from local ATH = dump phase already in progress
+  - { metric: drop_from_ath_pct,   op: lte,    value: -0.5 }
+  - { metric: dev_holding_pct,     op: lt,     value: 5 }
+
+scoring:
+  # Deep-dump entry zone (badidoyo "80% drop"): -70% drawdown rewards 25pts
+  - { metric: drop_from_ath_pct,         op: lte,    value: -0.7,  points: 25 }
+  # Ponyin's primary TA
+  - { metric: candle_confirm_3_green,    op: equals, value: true,  points: 20 }
+  # Badidoyo's primary TA
+  - { metric: near_fib_786,              op: equals, value: true,  points: 20 }
+  # Andri's "RSI atas tunggu turun"  (k<80 OR dropping_from_overbought)
+  - { metric: stoch_rsi_safe,            op: equals, value: true,  points: 15 }
+  - { metric: bundler_pct,               op: lt,     value: 6,     points: 15 }
+  - { metric: global_fee_sol,            op: gt,     value: 2,     points: 15 }   # sustained organic
+  - { metric: volume_1h_usd,             op: gte,    value: 5000,  points: 10 }
+
+boosters:
+  - { metric: smart_money_buys,          op: gte,    value: 2,     points: 10 }
+  - { metric: dex_paid_status,           op: equals, value: paid,  points: 10 }
+  - { metric: is_copycat_of_runner,      op: equals, value: false, points: 10 }

@@ -7,10 +7,12 @@ export interface FilterRule {
   points?: number;
 }
 
+export type FilterPipeline = "before_migrated" | "after_migrated" | "sleeper";
+
 export interface FilterTemplate {
   id: string;
   name: string;
-  pipeline: "new_pair" | "sleeper";
+  pipeline: FilterPipeline;
   score_threshold: number;
   hard_rules: FilterRule[];
   scoring: FilterRule[];
@@ -28,7 +30,7 @@ export interface RuleEval {
 
 export interface FilterDecision {
   templateId: string;
-  pipeline: "new_pair" | "sleeper";
+  pipeline: FilterPipeline;
   passed: boolean;
   reason: "hard_rule_failed" | "score_below_threshold" | "ok";
   score: number;

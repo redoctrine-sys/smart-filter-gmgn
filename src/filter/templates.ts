@@ -13,7 +13,7 @@ const RuleSchema = z.object({
 const TemplateSchema = z.object({
   id: z.string(),
   name: z.string(),
-  pipeline: z.enum(["new_pair", "sleeper"]),
+  pipeline: z.enum(["before_migrated", "after_migrated", "sleeper"]),
   score_threshold: z.number(),
   hard_rules: z.array(RuleSchema).default([]),
   scoring: z.array(RuleSchema).default([]),

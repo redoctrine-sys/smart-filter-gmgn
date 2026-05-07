@@ -28,7 +28,9 @@ export function buildMetrics(
     market_cap_usd: snap.summary.marketCapUsd,
     price_usd: snap.summary.priceUsd,
     age_hours: snap.summary.ageHours,
+    age_minutes: snap.summary.ageHours === null ? null : snap.summary.ageHours * 60,
     socials_count: snap.summary.socialsCount,
+    migration_status: snap.summary.migrationStatus,
 
     // security
     mint_authority: snap.security.mintAuthority,
@@ -44,9 +46,18 @@ export function buildMetrics(
     global_fee_status: snap.security.globalFeeStatus,
     dex_paid_status: snap.security.dexPaidStatus,
 
-    // candles
+    // candles + indicators
     candle_confirm_3_green: snap.candles.last3GreenInARow,
     near_fib_786: snap.candles.nearFib786,
+    ath_price_usd: snap.candles.athPriceUsd,
+    drop_from_ath_pct: snap.candles.dropFromAthPct,
+    stoch_rsi_k: snap.candles.stochRsiK,
+    stoch_rsi_signal: snap.candles.stochRsiSignal,
+    stoch_rsi_safe: snap.candles.stochRsiSafe,
+    stoch_rsi_overbought:
+      snap.candles.stochRsiK !== null ? snap.candles.stochRsiK > 80 : null,
+    stoch_rsi_oversold:
+      snap.candles.stochRsiK !== null ? snap.candles.stochRsiK < 20 : null,
 
     // holders
     holder_stacked: snap.holders.holderStacked,

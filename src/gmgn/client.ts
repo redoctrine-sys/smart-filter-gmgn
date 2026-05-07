@@ -1,11 +1,13 @@
 import { request } from "undici";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
+import { detectAth, stochRsi } from "./indicators.js";
 import { limiter } from "./rateLimiter.js";
 import type {
   CandleSnapshot,
   CohortStats,
   HolderSnapshot,
+  MigrationStatus,
   RugSignals,
   TokenSecurity,
   TokenSnapshot,
@@ -89,6 +91,9 @@ function mapSummary(raw: RawJson): TokenSummary {
   const socialsCount = [twitter, telegram, website].filter(Boolean).length;
   const createdAt = num((raw as RawJson)["created_at"] ?? (raw as RawJson)["open_timestamp"]);
   const ageHours = createdAt ? (Date.now() / 1000 - createdAt) / 3600 : null;
+  const launchpad = str(
+    (raw as RawJson)["launchpad"] ?? (raw as RawJson)["pool_type"] ?? (raw as RawJson)["dex"],
+  ).toLowerCase();
   return {
     ca,
     symbol: str((raw as RawJson)["symbol"]),
@@ -101,7 +106,8 @@ function mapSummary(raw: RawJson): TokenSummary {
       website: website || undefined,
     },
     socialsCount,
-    launchpad: str((raw as RawJson)["launchpad"] ?? (raw as RawJson)["pool_type"] ?? (raw as RawJson)["dex"]).toLowerCase(),
+    launchpad,
+    migrationStatus: detectMigration(raw, launchpad),
     marketCapUsd: num((raw as RawJson)["market_cap"] ?? (raw as RawJson)["mcap"]),
     priceUsd: num((raw as RawJson)["price"] ?? (raw as RawJson)["price_usd"]),
     ageHours,
@@ -110,6 +116,31 @@ function mapSummary(raw: RawJson): TokenSummary {
     volume1hUsd: num((raw as RawJson)["volume_1h"]),
     volume24hUsd: num((raw as RawJson)["volume_24h"]),
   };
+}
+
+/**
+ * Migration status — derived primarily from launchpad/pool_type. Adjust the
+ * keyword lists here if GMGN renames a launchpad.
+ *
+ *   bonding   → still on the Pump.fun (or similar) bonding curve
+ *   migrated  → already migrated to a Raydium pool (AMM/CLMM/V3)
+ *   unknown   → could not classify (skipped by both new-pair pipelines)
+ */
+const BONDING_HINTS = ["pump", "pumpfun", "moonshot", "bonkfun", "bonk", "bonding"];
+const MIGRATED_HINTS = ["raydium", "raydium_amm", "raydium_clmm", "raydium_v3", "meteora", "orca"];
+
+function detectMigration(raw: RawJson, launchpad: string): MigrationStatus {
+  const explicit = str((raw as RawJson)["migration_status"]).toLowerCase();
+  if (explicit === "bonding" || explicit === "migrated") return explicit;
+  const migratedFlag =
+    bool((raw as RawJson)["migrated"]) ||
+    bool((raw as RawJson)["is_migrated"]) ||
+    !!num((raw as RawJson)["migrated_at"]);
+  if (migratedFlag) return "migrated";
+  const lp = launchpad.toLowerCase();
+  if (lp && MIGRATED_HINTS.some((h) => lp.includes(h))) return "migrated";
+  if (lp && BONDING_HINTS.some((h) => lp.includes(h))) return "bonding";
+  return "unknown";
 }
 
 function mapSecurity(raw: RawJson): TokenSecurity {
@@ -154,6 +185,33 @@ export const gmgnClient = {
     }
   },
 
+  /** Recently migrated to Raydium (post-bonding sweet spot). */
+  async fetchRecentlyMigrated(opts: { limit?: number; maxAgeHours?: number } = {}): Promise<TokenSnapshot[]> {
+    const limit = opts.limit ?? 80;
+    const maxAge = opts.maxAgeHours ?? 6;
+    try {
+      const raw = await gmgnGet("v1/sol/tokens/migrated", { limit, max_age_hours: maxAge });
+      const arr = pickArray(raw);
+      return arr.map(toSnapshotShallow).filter((s): s is TokenSnapshot => !!s);
+    } catch (err) {
+      // Some GMGN deployments don't have a dedicated /migrated endpoint —
+      // fall back to /scanner with launchpad hint.
+      logger.debug({ err: String(err) }, "fetchRecentlyMigrated /migrated failed, falling back");
+      try {
+        const raw = await gmgnGet("v1/sol/tokens/scanner", {
+          limit,
+          launchpad: "raydium",
+          max_age_hours: maxAge,
+        });
+        const arr = pickArray(raw);
+        return arr.map(toSnapshotShallow).filter((s): s is TokenSnapshot => !!s);
+      } catch (err2) {
+        logger.error({ err: String(err2) }, "fetchRecentlyMigrated fallback failed");
+        return [];
+      }
+    }
+  },
+
   async fetchSleeperCandidates(opts: {
     minMcUsd: number;
     maxMcUsd: number;
@@ -178,18 +236,19 @@ export const gmgnClient = {
 
   async enrich(ca: string): Promise<TokenSnapshot | null> {
     try {
-      const [info, candles, holders, security] = await Promise.all([
+      const [info, kline1m, kline5m, holders, security] = await Promise.all([
         gmgnGet(`v1/sol/tokens/info`, { address: ca }),
         gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "1m", limit: 30 }),
+        gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "5m", limit: 100 }),
         gmgnGet(`v1/sol/tokens/holders`, { address: ca, limit: 100 }),
         gmgnGet(`v1/sol/tokens/security`, { address: ca }),
       ]);
       return {
         summary: mapSummary({ ...info, ...security }),
         security: mapSecurity({ ...info, ...security }),
-        candles: mapCandles(candles),
+        candles: mapCandles(kline1m, kline5m),
         holders: mapHolders(holders, info),
-        volume: mapVolume(info, candles),
+        volume: mapVolume(info, kline1m),
         walletComposition: mapWalletComposition(holders),
       };
     } catch (err) {
@@ -237,20 +296,61 @@ export const gmgnClient = {
   },
 };
 
-function mapCandles(raw: RawJson): CandleSnapshot {
-  const arr = pickArray(raw);
-  if (arr.length === 0) {
-    return { last3GreenInARow: false, lastClose: null, fib786Level: null, nearFib786: false };
-  }
-  const last3 = arr.slice(-3);
-  const allGreen = last3.length === 3 && last3.every((c) => num(c["close"])! > num(c["open"])!);
-  const closes = arr.map((c) => num(c["close"])).filter((n): n is number => n !== null);
-  const high = Math.max(...closes);
-  const low = Math.min(...closes);
-  const fib786 = high - (high - low) * 0.786;
-  const lastClose = closes[closes.length - 1] ?? null;
-  const nearFib786 = lastClose !== null && Math.abs(lastClose - fib786) / lastClose < 0.05;
-  return { last3GreenInARow: allGreen, lastClose, fib786Level: fib786, nearFib786 };
+function mapCandles(raw1m: RawJson, raw5m?: RawJson): CandleSnapshot {
+  const arr1m = pickArray(raw1m);
+  const arr5m = raw5m ? pickArray(raw5m) : arr1m;
+  const empty: CandleSnapshot = {
+    last3GreenInARow: false,
+    lastClose: null,
+    fib786Level: null,
+    nearFib786: false,
+    athPriceUsd: null,
+    dropFromAthPct: null,
+    stochRsiK: null,
+    stochRsiSignal: null,
+    stochRsiSafe: true,
+  };
+  if (arr1m.length === 0 && arr5m.length === 0) return empty;
+
+  // 3-candle confirm (Ponyin) on 1m TF
+  const last3 = arr1m.slice(-3);
+  const allGreen =
+    last3.length === 3 &&
+    last3.every((c) => {
+      const close = num(c["close"]);
+      const open = num(c["open"]);
+      return close !== null && open !== null && close > open;
+    });
+
+  // ATH + Fib (Badidoyo) on 5m TF (richer history, ~8h window)
+  const closes5m = arr5m
+    .map((c) => num(c["close"]))
+    .filter((n): n is number => n !== null);
+  const ath = detectAth(closes5m);
+  const high = closes5m.length > 0 ? Math.max(...closes5m) : null;
+  const low = closes5m.length > 0 ? Math.min(...closes5m) : null;
+  const fib786 = high !== null && low !== null ? high - (high - low) * 0.786 : null;
+  const lastClose = closes5m.length > 0 ? closes5m[closes5m.length - 1]! : null;
+  const nearFib786 =
+    lastClose !== null && fib786 !== null && Math.abs(lastClose - fib786) / lastClose < 0.05;
+
+  // Stoch RSI on 5m TF (Andri "RSI atas tunggu turun")
+  const stoch = stochRsi(closes5m, 14, 14, 3);
+  const stochRsiSafe = stoch
+    ? stoch.k < 80 || stoch.signal === "dropping_from_overbought"
+    : true; // missing data → don't penalize
+
+  return {
+    last3GreenInARow: allGreen,
+    lastClose,
+    fib786Level: fib786,
+    nearFib786,
+    athPriceUsd: ath?.athPriceUsd ?? null,
+    dropFromAthPct: ath?.dropFromAthPct ?? null,
+    stochRsiK: stoch?.k ?? null,
+    stochRsiSignal: stoch?.signal ?? null,
+    stochRsiSafe,
+  };
 }
 
 function mapHolders(rawHolders: RawJson, rawInfo: RawJson): HolderSnapshot {
@@ -282,7 +382,17 @@ function toSnapshotShallow(raw: RawJson): TokenSnapshot | null {
   return {
     summary,
     security: mapSecurity(raw),
-    candles: { last3GreenInARow: false, lastClose: summary.priceUsd, nearFib786: false },
+    candles: {
+      last3GreenInARow: false,
+      lastClose: summary.priceUsd,
+      fib786Level: null,
+      nearFib786: false,
+      athPriceUsd: null,
+      dropFromAthPct: null,
+      stochRsiK: null,
+      stochRsiSignal: null,
+      stochRsiSafe: true,
+    },
     holders: { topHolderHoldHours: null, holderStacked: false, smartMoneyBuysLastHour: 0 },
     volume: { volumeSpikeRatio: null },
     walletComposition: { top10: emptyCohort(), top100: emptyCohort() },
