@@ -77,15 +77,19 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertE
     `Fee: ${escapeMarkdownV2(formatSol(sec.globalFeeSol))} \\(${escapeMarkdownV2(sec.globalFeeStatus)}\\) · DexPaid: ${escapeMarkdownV2(sec.dexPaidStatus)}`,
   );
 
-  // TA strip — relevant when chart has settled (after_migrated + sleeper most useful)
+  // TA strip — pipeline-aware Stoch RSI TF (1m for new pair, 5m for sleeper)
   const taParts: string[] = [];
   if (c.dropFromAthPct !== null) {
     taParts.push(`Drop from ATH: ${escapeMarkdownV2((c.dropFromAthPct * 100).toFixed(1))}%`);
   }
-  if (c.stochRsiK !== null) {
-    const sig = c.stochRsiSignal ?? "neutral";
-    const flag = c.stochRsiSafe ? "✅" : "⚠️";
-    taParts.push(`StochRSI: ${escapeMarkdownV2(c.stochRsiK.toFixed(0))} ${flag} \\(${escapeMarkdownV2(sig)}\\)`);
+  const stoch = decision.pipeline === "sleeper" ? c.stochRsi5m : c.stochRsi1m;
+  const stochTf = decision.pipeline === "sleeper" ? "5m" : "1m";
+  if (stoch.k !== null) {
+    const sig = stoch.signal ?? "neutral";
+    const flag = stoch.safe ? "✅" : "⚠️";
+    taParts.push(
+      `StochRSI \\(${escapeMarkdownV2(stochTf)}\\): ${escapeMarkdownV2(stoch.k.toFixed(0))} ${flag} \\(${escapeMarkdownV2(sig)}\\)`,
+    );
   }
   if (c.last3GreenInARow) taParts.push("3🟢 candle confirm");
   if (c.nearFib786) taParts.push("Fib 0\\.786 zone");

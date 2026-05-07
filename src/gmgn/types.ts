@@ -43,6 +43,13 @@ export interface TokenSecurity {
 
 import type { StochRsiSignal } from "./indicators.js";
 
+export interface StochRsiSnapshot {
+  k: number | null;
+  signal: StochRsiSignal | null;
+  /** k < 80 OR signal === "dropping_from_overbought" — Andri's "RSI atas tunggu turun". */
+  safe: boolean;
+}
+
 export interface CandleSnapshot {
   last3GreenInARow: boolean;
   lastClose: number | null;
@@ -50,10 +57,17 @@ export interface CandleSnapshot {
   nearFib786: boolean;
   athPriceUsd: number | null;
   dropFromAthPct: number | null; // negative when below ATH
-  stochRsiK: number | null;
-  stochRsiSignal: StochRsiSignal | null;
-  /** k < 80 OR signal === "dropping_from_overbought" — Andri's "RSI atas tunggu turun". */
-  stochRsiSafe: boolean;
+  /**
+   * Stoch RSI on 1-minute close series. Preferred TF for the New Pair
+   * phases (before_migrated + after_migrated) per the user's analysis —
+   * Ponyin/Andri scalping mode.
+   */
+  stochRsi1m: StochRsiSnapshot;
+  /**
+   * Stoch RSI on 5-minute close series (~8h history). Preferred TF for
+   * the sleeper pipeline (slowcook patience play).
+   */
+  stochRsi5m: StochRsiSnapshot;
 }
 
 export interface HolderSnapshot {

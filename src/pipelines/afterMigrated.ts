@@ -143,7 +143,7 @@ export class AfterMigratedPipeline {
           score: decision.score,
           mc: enriched.summary.marketCapUsd,
           drop: enriched.candles.dropFromAthPct,
-          stochK: enriched.candles.stochRsiK,
+          stochK1m: enriched.candles.stochRsi1m.k,
         },
         "after_migrated ALERT",
       );

@@ -51,13 +51,26 @@ export function buildMetrics(
     near_fib_786: snap.candles.nearFib786,
     ath_price_usd: snap.candles.athPriceUsd,
     drop_from_ath_pct: snap.candles.dropFromAthPct,
-    stoch_rsi_k: snap.candles.stochRsiK,
-    stoch_rsi_signal: snap.candles.stochRsiSignal,
-    stoch_rsi_safe: snap.candles.stochRsiSafe,
-    stoch_rsi_overbought:
-      snap.candles.stochRsiK !== null ? snap.candles.stochRsiK > 80 : null,
-    stoch_rsi_oversold:
-      snap.candles.stochRsiK !== null ? snap.candles.stochRsiK < 20 : null,
+
+    // Stoch RSI is exposed on BOTH timeframes. Template picks based on
+    // pipeline:
+    //   - before_migrated / after_migrated → use _1m suffix (new pair)
+    //   - sleeper                          → use _5m suffix (slowcook)
+    stoch_rsi_k_1m: snap.candles.stochRsi1m.k,
+    stoch_rsi_signal_1m: snap.candles.stochRsi1m.signal,
+    stoch_rsi_safe_1m: snap.candles.stochRsi1m.safe,
+    stoch_rsi_overbought_1m:
+      snap.candles.stochRsi1m.k !== null ? snap.candles.stochRsi1m.k > 80 : null,
+    stoch_rsi_oversold_1m:
+      snap.candles.stochRsi1m.k !== null ? snap.candles.stochRsi1m.k < 20 : null,
+
+    stoch_rsi_k_5m: snap.candles.stochRsi5m.k,
+    stoch_rsi_signal_5m: snap.candles.stochRsi5m.signal,
+    stoch_rsi_safe_5m: snap.candles.stochRsi5m.safe,
+    stoch_rsi_overbought_5m:
+      snap.candles.stochRsi5m.k !== null ? snap.candles.stochRsi5m.k > 80 : null,
+    stoch_rsi_oversold_5m:
+      snap.candles.stochRsi5m.k !== null ? snap.candles.stochRsi5m.k < 20 : null,
 
     // holders
     holder_stacked: snap.holders.holderStacked,

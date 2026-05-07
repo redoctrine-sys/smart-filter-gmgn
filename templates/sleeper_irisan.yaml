@@ -28,7 +28,7 @@ scoring:
   - { metric: volume_spike_ratio,     op: gte,    value: 3,     points: 20 }   # Badidoyo verbatim
   - { metric: holder_stacked,         op: equals, value: true,  points: 15 }
   - { metric: near_fib_786,           op: equals, value: true,  points: 15 }
-  - { metric: stoch_rsi_safe,         op: equals, value: true,  points: 10 }   # Andri overbought warning
+  - { metric: stoch_rsi_safe_5m,      op: equals, value: true,  points: 10 }   # Andri overbought warning, 5m TF for slowcook
   - { metric: global_fee_status,      op: equals, value: green, points: 15 }
   - { metric: bundler_pct,            op: lt,     value: 6,     points: 10 }
 

@@ -34,8 +34,8 @@ scoring:
   - { metric: candle_confirm_3_green,    op: equals, value: true,  points: 20 }
   # Badidoyo's primary TA
   - { metric: near_fib_786,              op: equals, value: true,  points: 20 }
-  # Andri's "RSI atas tunggu turun"  (k<80 OR dropping_from_overbought)
-  - { metric: stoch_rsi_safe,            op: equals, value: true,  points: 15 }
+  # Andri's "RSI atas tunggu turun" on 1-min TF (k<80 OR dropping_from_overbought)
+  - { metric: stoch_rsi_safe_1m,         op: equals, value: true,  points: 15 }
   - { metric: bundler_pct,               op: lt,     value: 6,     points: 15 }
   - { metric: global_fee_sol,            op: gt,     value: 2,     points: 15 }   # sustained organic
   - { metric: volume_1h_usd,             op: gte,    value: 5000,  points: 10 }

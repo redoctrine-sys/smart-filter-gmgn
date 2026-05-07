@@ -161,9 +161,10 @@ Plus **migration + technical analysis** metrics (mostly used by `after_migrated`
 | `ath_price_usd`, `drop_from_ath_pct` | computed on the 5m kline (8h window). `drop_from_ath_pct` is negative when below ATH; `≤ -0.7` = 70%+ dump zone. |
 | `candle_confirm_3_green` | last 3 closes > opens on the 1m TF (Ponyin) |
 | `near_fib_786` | last close within ±5% of `high - (high-low)*0.786` on 5m TF (badidoyo) |
-| `stoch_rsi_k`, `stoch_rsi_signal` | Stochastic RSI %K (0-100) on 5m closes; signal ∈ {`overbought`, `oversold`, `dropping_from_overbought`, `rising_from_oversold`, `neutral`} |
-| `stoch_rsi_safe` | true when `k < 80` OR signal === `dropping_from_overbought` (Andri "RSI atas tunggu turun") |
-| `stoch_rsi_overbought`, `stoch_rsi_oversold` | convenience booleans for sharper rules |
+| `stoch_rsi_k_1m`, `stoch_rsi_signal_1m` | Stochastic RSI %K (0-100) on **1-minute** closes (60-bar history); signal ∈ {`overbought`, `oversold`, `dropping_from_overbought`, `rising_from_oversold`, `neutral`}. **Use this TF for new pair** (`before_migrated` + `after_migrated`) per Ponyin/Andri scalping. |
+| `stoch_rsi_k_5m`, `stoch_rsi_signal_5m` | Same indicator on **5-minute** closes (~8h history). **Use this TF for sleeper** (slowcook). |
+| `stoch_rsi_safe_1m`, `stoch_rsi_safe_5m` | true when `k < 80` OR signal === `dropping_from_overbought` (Andri "RSI atas tunggu turun"). Pick the suffix that matches your pipeline. |
+| `stoch_rsi_overbought_1m`, `stoch_rsi_oversold_1m`, `..._5m` | convenience booleans for sharper rules |
 
 ---
 

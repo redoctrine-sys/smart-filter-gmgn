@@ -9,6 +9,7 @@ import type {
   HolderSnapshot,
   MigrationStatus,
   RugSignals,
+  StochRsiSnapshot,
   TokenSecurity,
   TokenSnapshot,
   TokenSummary,
@@ -238,7 +239,9 @@ export const gmgnClient = {
     try {
       const [info, kline1m, kline5m, holders, security] = await Promise.all([
         gmgnGet(`v1/sol/tokens/info`, { address: ca }),
-        gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "1m", limit: 30 }),
+        // 60 1m candles (1h history) — enough for Stoch RSI(14,14,3) which
+        // needs at least 31 closes.
+        gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "1m", limit: 60 }),
         gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "5m", limit: 100 }),
         gmgnGet(`v1/sol/tokens/holders`, { address: ca, limit: 100 }),
         gmgnGet(`v1/sol/tokens/security`, { address: ca }),
@@ -296,6 +299,20 @@ export const gmgnClient = {
   },
 };
 
+function emptyStochRsi(): StochRsiSnapshot {
+  return { k: null, signal: null, safe: true };
+}
+
+function computeStochSnapshot(closes: number[]): StochRsiSnapshot {
+  const stoch = stochRsi(closes, 14, 14, 3);
+  if (!stoch) return emptyStochRsi();
+  return {
+    k: stoch.k,
+    signal: stoch.signal,
+    safe: stoch.k < 80 || stoch.signal === "dropping_from_overbought",
+  };
+}
+
 function mapCandles(raw1m: RawJson, raw5m?: RawJson): CandleSnapshot {
   const arr1m = pickArray(raw1m);
   const arr5m = raw5m ? pickArray(raw5m) : arr1m;
@@ -306,9 +323,8 @@ function mapCandles(raw1m: RawJson, raw5m?: RawJson): CandleSnapshot {
     nearFib786: false,
     athPriceUsd: null,
     dropFromAthPct: null,
-    stochRsiK: null,
-    stochRsiSignal: null,
-    stochRsiSafe: true,
+    stochRsi1m: emptyStochRsi(),
+    stochRsi5m: emptyStochRsi(),
   };
   if (arr1m.length === 0 && arr5m.length === 0) return empty;
 
@@ -322,23 +338,32 @@ function mapCandles(raw1m: RawJson, raw5m?: RawJson): CandleSnapshot {
       return close !== null && open !== null && close > open;
     });
 
-  // ATH + Fib (Badidoyo) on 5m TF (richer history, ~8h window)
+  // Closes on both TFs
+  const closes1m = arr1m
+    .map((c) => num(c["close"]))
+    .filter((n): n is number => n !== null);
   const closes5m = arr5m
     .map((c) => num(c["close"]))
     .filter((n): n is number => n !== null);
+
+  // ATH + Fib on 5m TF (richer history, ~8h window)
   const ath = detectAth(closes5m);
   const high = closes5m.length > 0 ? Math.max(...closes5m) : null;
   const low = closes5m.length > 0 ? Math.min(...closes5m) : null;
   const fib786 = high !== null && low !== null ? high - (high - low) * 0.786 : null;
-  const lastClose = closes5m.length > 0 ? closes5m[closes5m.length - 1]! : null;
+  const last5m = closes5m.length > 0 ? closes5m[closes5m.length - 1]! : null;
   const nearFib786 =
-    lastClose !== null && fib786 !== null && Math.abs(lastClose - fib786) / lastClose < 0.05;
+    last5m !== null && fib786 !== null && Math.abs(last5m - fib786) / last5m < 0.05;
 
-  // Stoch RSI on 5m TF (Andri "RSI atas tunggu turun")
-  const stoch = stochRsi(closes5m, 14, 14, 3);
-  const stochRsiSafe = stoch
-    ? stoch.k < 80 || stoch.signal === "dropping_from_overbought"
-    : true; // missing data → don't penalize
+  // Stoch RSI on BOTH TFs — templates choose based on pipeline:
+  //   - new pair (before/after migrated) → 1m (Ponyin/Andri scalping)
+  //   - sleeper                          → 5m (slowcook)
+  const stochRsi1m = computeStochSnapshot(closes1m);
+  const stochRsi5m = computeStochSnapshot(closes5m);
+
+  // Last close: prefer 1m if available (most recent tick).
+  const last1m = closes1m.length > 0 ? closes1m[closes1m.length - 1]! : null;
+  const lastClose = last1m ?? last5m;
 
   return {
     last3GreenInARow: allGreen,
@@ -347,9 +372,8 @@ function mapCandles(raw1m: RawJson, raw5m?: RawJson): CandleSnapshot {
     nearFib786,
     athPriceUsd: ath?.athPriceUsd ?? null,
     dropFromAthPct: ath?.dropFromAthPct ?? null,
-    stochRsiK: stoch?.k ?? null,
-    stochRsiSignal: stoch?.signal ?? null,
-    stochRsiSafe,
+    stochRsi1m,
+    stochRsi5m,
   };
 }
 
@@ -389,9 +413,8 @@ function toSnapshotShallow(raw: RawJson): TokenSnapshot | null {
       nearFib786: false,
       athPriceUsd: null,
       dropFromAthPct: null,
-      stochRsiK: null,
-      stochRsiSignal: null,
-      stochRsiSafe: true,
+      stochRsi1m: emptyStochRsi(),
+      stochRsi5m: emptyStochRsi(),
     },
     holders: { topHolderHoldHours: null, holderStacked: false, smartMoneyBuysLastHour: 0 },
     volume: { volumeSpikeRatio: null },

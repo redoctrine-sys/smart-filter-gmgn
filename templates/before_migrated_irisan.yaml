@@ -40,3 +40,6 @@ boosters:
   - { metric: is_copycat_of_runner,       op: equals, value: false, points: 10 }
   # Volume confirmation (any organic flow at this stage is a positive)
   - { metric: volume_5m_usd,              op: gte,   value: 2000, points: 10 }
+  # Stoch RSI on 1-min TF — Andri's "RSI atas tunggu turun" applied to
+  # scalping mode. Light booster only since TA is unreliable this early.
+  - { metric: stoch_rsi_safe_1m,          op: equals, value: true, points: 5 }
