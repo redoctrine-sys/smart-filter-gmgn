@@ -264,6 +264,53 @@ export const snapshotsRepo = {
   },
 };
 
+export interface RecentTokenMetaRow {
+  ca: string;
+  symbol: string | null;
+  name: string | null;
+  description: string | null;
+  pipeline: string;
+  first_seen_at: number;
+}
+
+export const recentTokenMetaRepo = {
+  upsert(args: {
+    ca: string;
+    symbol: string | null;
+    name: string | null;
+    description: string | null;
+    pipeline: string;
+    firstSeenAt: number;
+  }): void {
+    db.prepare(
+      `INSERT INTO recent_token_meta(ca, symbol, name, description, pipeline, first_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ca) DO NOTHING`,
+    ).run(
+      args.ca,
+      args.symbol,
+      args.name,
+      args.description,
+      args.pipeline,
+      args.firstSeenAt,
+    );
+  },
+  recent(sinceMs: number, excludeCa: string, limit = 500): RecentTokenMetaRow[] {
+    return db
+      .prepare(
+        `SELECT * FROM recent_token_meta
+         WHERE first_seen_at > ? AND ca != ?
+         ORDER BY first_seen_at DESC
+         LIMIT ?`,
+      )
+      .all(sinceMs, excludeCa, limit) as RecentTokenMetaRow[];
+  },
+  pruneOlderThan(ms: number): number {
+    const info = db.prepare(`DELETE FROM recent_token_meta WHERE first_seen_at < ?`).run(ms);
+    return Number(info.changes);
+  },
+};
+
 export const captureScheduleRepo = {
   upsert(ca: string, pipeline: string, firstSeenAt: number, nextCaptureAt: number): void {
     db.prepare(

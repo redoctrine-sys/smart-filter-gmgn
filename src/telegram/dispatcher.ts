@@ -33,7 +33,16 @@ function topicId(pipeline: Pipeline): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: { narrative?: number }): string {
+interface AlertExtras {
+  narrative?: number;
+  isOldestInCluster?: boolean;
+  clusterSize?: number;
+  isCopycatOfRunner?: boolean;
+  copycatRunnerSymbol?: string;
+  copycatSimilarity?: number;
+}
+
+function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertExtras): string {
   const s = snap.summary;
   const sec = snap.security;
   const lines: string[] = [];
@@ -43,6 +52,9 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: { narr
   lines.push("");
   lines.push(`MC: ${escapeMarkdownV2(formatUsd(s.marketCapUsd))} · LP: ${escapeMarkdownV2(formatUsd(s.liquidityUsd))} · Age: ${escapeMarkdownV2(s.ageHours ? s.ageHours.toFixed(1) + "h" : "—")}`);
   lines.push(
+    `Vol 5m/1h/24h: ${escapeMarkdownV2(formatUsd(s.volume5mUsd))} / ${escapeMarkdownV2(formatUsd(s.volume1hUsd))} / ${escapeMarkdownV2(formatUsd(s.volume24hUsd))}`,
+  );
+  lines.push(
     `Bundler: ${escapeMarkdownV2(formatPct(sec.bundlerPct))} · Top10: ${escapeMarkdownV2(formatPct(sec.top10HolderPct))} · Dev: ${escapeMarkdownV2(formatPct(sec.devHoldingPct))}`,
   );
   lines.push(
@@ -50,6 +62,27 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: { narr
   );
   if (extras.narrative !== undefined) {
     lines.push(`Narrative: ${escapeMarkdownV2(extras.narrative.toFixed(1))}/10`);
+  }
+  if (decision.pipeline === "new_pair") {
+    const verdicts: string[] = [];
+    if (extras.clusterSize !== undefined) {
+      if (extras.isOldestInCluster) {
+        verdicts.push(
+          extras.clusterSize > 1
+            ? `🥇 OLDEST in cluster of ${extras.clusterSize}`
+            : "🌱 Unique narrative",
+        );
+      } else if (extras.clusterSize > 1) {
+        verdicts.push(`👥 Copycat \\(cluster=${extras.clusterSize}\\)`);
+      }
+    }
+    if (extras.isCopycatOfRunner && extras.copycatRunnerSymbol) {
+      const sim = extras.copycatSimilarity ? (extras.copycatSimilarity * 100).toFixed(0) : "?";
+      verdicts.push(
+        `⚠️ Runner copycat: \`${escapeMarkdownV2(extras.copycatRunnerSymbol)}\` ${escapeMarkdownV2(sim)}%`,
+      );
+    }
+    if (verdicts.length > 0) lines.push(verdicts.join(" · "));
   }
   const wc = snap.walletComposition;
   if (wc.top10.n > 0 || wc.top100.n > 0) {
@@ -85,7 +118,7 @@ export async function sendAlert(
   pipeline: "new_pair" | "sleeper",
   snap: TokenSnapshot,
   decision: FilterDecision,
-  extras: { narrative?: number } = {},
+  extras: AlertExtras = {},
 ): Promise<DispatchResult> {
   if (!target.chatId) {
     logger.warn("No TELEGRAM_CHAT_ID set — alert dropped. Run /setup in the group.");

@@ -103,6 +103,16 @@ CREATE TABLE IF NOT EXISTS capture_schedule (
   PRIMARY KEY (ca, pipeline)
 );
 CREATE INDEX IF NOT EXISTS idx_cs_status_next ON capture_schedule(status, next_capture_at);
+
+CREATE TABLE IF NOT EXISTS recent_token_meta (
+  ca TEXT PRIMARY KEY,
+  symbol TEXT,
+  name TEXT,
+  description TEXT,
+  pipeline TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rtm_first_seen ON recent_token_meta(first_seen_at);
 `;
 
 db.exec(SCHEMA);

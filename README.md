@@ -129,6 +129,13 @@ top10_max_sol_balance, top10_buy_sell_ratio, top100_n, top100_avg_buy_sol,
 top100_avg_sell_sol, top100_avg_sol_balance, top100_max_sol_balance,
 top100_buy_sell_ratio`.
 
+Plus **volume** metrics (raw USD turnover, useful for "organic volume + global fee" checks):
+`volume_5m_usd, volume_1h_usd, volume_24h_usd`.
+
+Plus **narrative cluster + copycat** metrics for the New Pair pipeline (see "Narrative cluster + copycat" below):
+`is_oldest_in_cluster, cluster_size, earlier_similar_count,
+is_copycat_of_runner, copycat_similarity, copycat_runner_symbol`.
+
 ---
 
 ## Post-alert lifecycle
@@ -178,6 +185,42 @@ smart-filter-gmgn/
 ├── .env.example
 └── README.md
 ```
+
+---
+
+## Narrative cluster + copycat (New Pair)
+
+Two cooperating signals derived from @badidoyo's "TOKEN AGE = OLDEST" rule and the broader "copycat of today's runners" heuristic:
+
+### Cluster — "OLDEST in batch"
+For every new candidate, the bot scans the last `CLUSTER_LOOKBACK_HOURS` (default 6h) of tokens it has previously seen. Using a Jaccard similarity over name + symbol + description tokens (with an exact-symbol bonus), it clusters the candidate with anything that resembles it.
+
+| Verdict | Meaning |
+|---|---|
+| `cluster_size = 1` | unique narrative — no recent siblings |
+| `is_oldest_in_cluster = true` (and `cluster_size > 1`) | candidate appeared first within its cluster — strongest "OLDEST" signal |
+| `is_oldest_in_cluster = false` | another similar token was seen earlier — likely a copycat of a recent batch |
+
+### Runner copycat
+A "runner of the day" is any token whose captured snapshots over the last `RUNNER_LOOKBACK_HOURS` (default 24h) show `max(price)/min(price) >= RUNNER_MIN_MULTIPLIER` (default 3×). Runner detection is cached for 10 minutes.
+
+| Verdict | Meaning |
+|---|---|
+| `is_copycat_of_runner = true` | candidate is highly similar (Jaccard ≥ `COPYCAT_SIMILARITY_THRESHOLD`) to a 3×+ runner — penalize / skip |
+| `copycat_runner_symbol` | the runner's symbol the candidate matched (shown in the alert card) |
+
+### Default rules in `templates/new_pair_irisan.yaml`
+The default template gives boosters for healthy narrative behavior:
+
+```yaml
+- { metric: volume_1h_usd,         op: gte,    value: 5000, points: 10 }
+- { metric: is_oldest_in_cluster,  op: equals, value: true, points: 10 }
+- { metric: is_copycat_of_runner,  op: equals, value: false, points: 10 }
+```
+
+Tune via env: `CLUSTER_LOOKBACK_HOURS`, `RUNNER_LOOKBACK_HOURS`, `RUNNER_MIN_MULTIPLIER`, `COPYCAT_SIMILARITY_THRESHOLD`.
+
+> Cold start: runner detection is empty until the bot has ~24h of snapshot history. During the first day, copycat checks degrade gracefully (`is_copycat_of_runner` defaults to `false` ≅ no penalty).
 
 ---
 

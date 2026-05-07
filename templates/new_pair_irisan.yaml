@@ -69,6 +69,19 @@ boosters:
     op: equals
     value: paid
     points: 10
+  # Volume + narrative (added per badidoyo "TOKEN AGE = OLDEST" + runner copycat)
+  - metric: volume_1h_usd
+    op: gte
+    value: 5000
+    points: 10
+  - metric: is_oldest_in_cluster
+    op: equals
+    value: true
+    points: 10
+  - metric: is_copycat_of_runner
+    op: equals
+    value: false
+    points: 10
 
 # ---- Wallet composition rules (OFF by default — uncomment to enable) -
 # These are display-only by default. Uncomment to gate / score.

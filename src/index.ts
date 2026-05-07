@@ -45,16 +45,21 @@ async function main(): Promise<void> {
     );
   }, 60_000);
 
-  // Daily snapshot retention prune (default 30 days).
+  // Daily snapshot retention prune (default 30 days). Recent_token_meta
+  // gets pruned more aggressively (24h is enough for cluster/runner queries).
   setInterval(
     async () => {
       try {
-        const { snapshotsRepo } = await import("./db/repos.js");
-        const cutoff = Date.now() - env.BACKTEST_RETENTION_DAYS * 24 * 3600 * 1000;
-        const removed = snapshotsRepo.pruneOlderThan(cutoff);
-        if (removed > 0) logger.info({ removed }, "snapshots pruned");
+        const { snapshotsRepo, recentTokenMetaRepo } = await import("./db/repos.js");
+        const snapCutoff = Date.now() - env.BACKTEST_RETENTION_DAYS * 24 * 3600 * 1000;
+        const removed = snapshotsRepo.pruneOlderThan(snapCutoff);
+        const metaCutoff = Date.now() - env.RUNNER_LOOKBACK_HOURS * 3600 * 1000 * 2;
+        const removedMeta = recentTokenMetaRepo.pruneOlderThan(metaCutoff);
+        if (removed > 0 || removedMeta > 0) {
+          logger.info({ snapshots: removed, recentMeta: removedMeta }, "pruned");
+        }
       } catch (err) {
-        logger.error({ err: String(err) }, "snapshot prune failed");
+        logger.error({ err: String(err) }, "prune failed");
       }
     },
     24 * 3600 * 1000,

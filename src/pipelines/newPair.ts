@@ -1,10 +1,17 @@
 import { env } from "../config/env.js";
 import { snapshotter } from "../capture/index.js";
-import { alertsRepo, mutedRepo, tokensSeenRepo, watchlistRepo } from "../db/repos.js";
+import {
+  alertsRepo,
+  mutedRepo,
+  recentTokenMetaRepo,
+  tokensSeenRepo,
+  watchlistRepo,
+} from "../db/repos.js";
 import { FilterEngine } from "../filter/engine.js";
 import { buildMetrics } from "../filter/metricsAdapter.js";
 import { loadTemplate } from "../filter/templates.js";
 import { gmgnClient } from "../gmgn/client.js";
+import { detectCluster, detectCopycat } from "../narrative/copycat.js";
 import { sendAlert } from "../telegram/dispatcher.js";
 import { logger } from "../utils/logger.js";
 
@@ -58,7 +65,35 @@ export class NewPairPipeline {
       const enriched = await gmgnClient.enrich(ca);
       if (!enriched) continue;
       const smartMoney = await gmgnClient.smartMoneyBuysLastHour(ca);
-      const metrics = buildMetrics(enriched, { smartMoneyBuys: smartMoney });
+
+      // Record metadata for narrative cluster + record runners across pipelines.
+      const firstSeenAt = Date.now();
+      recentTokenMetaRepo.upsert({
+        ca,
+        symbol: enriched.summary.symbol || null,
+        name: enriched.summary.name || null,
+        description: enriched.summary.description ?? null,
+        pipeline: PIPELINE,
+        firstSeenAt,
+      });
+
+      const candidate = {
+        name: enriched.summary.name,
+        symbol: enriched.summary.symbol,
+        description: enriched.summary.description ?? null,
+      };
+      const cluster = detectCluster({ ca, candidate, firstSeenAt });
+      const copycat = detectCopycat(candidate);
+
+      const metrics = buildMetrics(enriched, {
+        smartMoneyBuys: smartMoney,
+        isOldestInCluster: cluster.isOldestInCluster,
+        clusterSize: cluster.clusterSize,
+        earlierSimilarCount: cluster.earlierSimilarCount,
+        isCopycatOfRunner: copycat.isCopycatOfRunner,
+        copycatSimilarity: copycat.similarity,
+        copycatRunnerSymbol: copycat.matchedRunner?.symbol ?? undefined,
+      });
       const decision = this.engine.evaluate(metrics);
 
       if (!decision.passed) {
@@ -74,7 +109,13 @@ export class NewPairPipeline {
       }
 
       tokensSeenRepo.mark(ca, PIPELINE);
-      const result = await sendAlert("new_pair", enriched, decision);
+      const result = await sendAlert("new_pair", enriched, decision, {
+        isOldestInCluster: cluster.isOldestInCluster,
+        clusterSize: cluster.clusterSize,
+        isCopycatOfRunner: copycat.isCopycatOfRunner,
+        copycatRunnerSymbol: copycat.matchedRunner?.symbol,
+        copycatSimilarity: copycat.similarity,
+      });
       const alertId = alertsRepo.insert({
         ca,
         pipeline: PIPELINE,

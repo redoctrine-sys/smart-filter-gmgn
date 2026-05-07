@@ -9,6 +9,12 @@ export function buildMetrics(
   extras: {
     smartMoneyBuys?: number;
     narrativeScore?: number;
+    isOldestInCluster?: boolean;
+    clusterSize?: number;
+    earlierSimilarCount?: number;
+    isCopycatOfRunner?: boolean;
+    copycatSimilarity?: number;
+    copycatRunnerSymbol?: string;
   } = {},
 ): Record<string, unknown> {
   return {
@@ -47,6 +53,9 @@ export function buildMetrics(
 
     // volume
     volume_spike_ratio: snap.volume.volumeSpikeRatio,
+    volume_5m_usd: snap.summary.volume5mUsd,
+    volume_1h_usd: snap.summary.volume1hUsd,
+    volume_24h_usd: snap.summary.volume24hUsd,
 
     // wallet composition (lifetime since launch)
     top10_n: snap.walletComposition.top10.n,
@@ -67,6 +76,14 @@ export function buildMetrics(
       snap.walletComposition.top100.avgBuySol,
       snap.walletComposition.top100.avgSellSol,
     ),
+
+    // narrative cluster + copycat (New Pair)
+    is_oldest_in_cluster: extras.isOldestInCluster ?? null,
+    cluster_size: extras.clusterSize ?? null,
+    earlier_similar_count: extras.earlierSimilarCount ?? null,
+    is_copycat_of_runner: extras.isCopycatOfRunner ?? null,
+    copycat_similarity: extras.copycatSimilarity ?? null,
+    copycat_runner_symbol: extras.copycatRunnerSymbol ?? null,
 
     // extras
     smart_money_buys: extras.smartMoneyBuys ?? snap.holders.smartMoneyBuysLastHour,

@@ -49,6 +49,12 @@ const envSchema = z.object({
   BACKTEST_BASE_SIZE_SOL: numStr(1.0),
   BACKTEST_RETENTION_DAYS: numStr(30),
 
+  // Narrative cluster + copycat detection (New Pair)
+  CLUSTER_LOOKBACK_HOURS: numStr(6),
+  RUNNER_LOOKBACK_HOURS: numStr(24),
+  RUNNER_MIN_MULTIPLIER: numStr(3.0),
+  COPYCAT_SIMILARITY_THRESHOLD: numStr(0.5),
+
   // Misc
   LOG_LEVEL: z.string().default("info"),
   DB_PATH: z.string().default("./data/state.db"),
