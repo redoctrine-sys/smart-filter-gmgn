@@ -72,6 +72,37 @@ CREATE TABLE IF NOT EXISTS muted_tokens (
   ca TEXT PRIMARY KEY,
   muted_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS historical_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ca TEXT NOT NULL,
+  pipeline TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  age_minutes_since_first_sight REAL NOT NULL,
+  price_usd REAL,
+  market_cap_usd REAL,
+  score INTEGER NOT NULL,
+  hard_pass INTEGER NOT NULL,
+  triggered INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  decision_json TEXT NOT NULL,
+  narrative_score REAL
+);
+CREATE INDEX IF NOT EXISTS idx_hs_ca ON historical_snapshots(ca);
+CREATE INDEX IF NOT EXISTS idx_hs_captured_at ON historical_snapshots(captured_at);
+CREATE INDEX IF NOT EXISTS idx_hs_pipeline_captured ON historical_snapshots(pipeline, captured_at);
+
+CREATE TABLE IF NOT EXISTS capture_schedule (
+  ca TEXT NOT NULL,
+  pipeline TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  next_capture_at INTEGER NOT NULL,
+  captures_done INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  PRIMARY KEY (ca, pipeline)
+);
+CREATE INDEX IF NOT EXISTS idx_cs_status_next ON capture_schedule(status, next_capture_at);
 `;
 
 db.exec(SCHEMA);

@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { getBotState, setBotState } from "../db/client.js";
 import { mutedRepo } from "../db/repos.js";
 import { logger } from "../utils/logger.js";
+import { runAndSendDigest } from "./digest.js";
 
 export const bot = new Telegraf(env.TELEGRAM_BOT_TOKEN);
 
@@ -85,6 +86,43 @@ bot.command("status", async (ctx) => {
     ].join("\n"),
   );
 });
+
+bot.command(["backtest", "review"], async (ctx) => {
+  const parts = ctx.message.text.split(/\s+/).slice(1);
+  const pipelineArg = (parts[0] ?? "all").toLowerCase();
+  const windowArg = (parts[1] ?? "24h").toLowerCase();
+  const windowMs = parseWindow(windowArg);
+  if (!windowMs) {
+    await ctx.reply("Usage: /backtest [new_pair|sleeper|all] [24h|3d|7d|14d]");
+    return;
+  }
+  const toMs = Date.now();
+  const fromMs = toMs - windowMs;
+  await ctx.reply(`Running backtest (${pipelineArg}, ${windowArg})…`);
+  const pipelines: ("new_pair" | "sleeper")[] =
+    pipelineArg === "all"
+      ? ["new_pair", "sleeper"]
+      : pipelineArg === "new_pair" || pipelineArg === "sleeper"
+        ? [pipelineArg]
+        : [];
+  if (pipelines.length === 0) {
+    await ctx.reply("Unknown pipeline. Use new_pair | sleeper | all.");
+    return;
+  }
+  for (const p of pipelines) {
+    await runAndSendDigest({ pipeline: p, fromMs, toMs }, ctx.message.message_id);
+  }
+});
+
+function parseWindow(arg: string): number | null {
+  const m = arg.match(/^(\d+)([hd])$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2];
+  if (unit === "h") return n * 3600 * 1000;
+  if (unit === "d") return n * 24 * 3600 * 1000;
+  return null;
+}
 
 bot.action(/mute:(.+)/, async (ctx) => {
   const ca = ctx.match[1];

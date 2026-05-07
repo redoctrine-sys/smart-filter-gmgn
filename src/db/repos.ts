@@ -173,3 +173,124 @@ export const mutedRepo = {
     );
   },
 };
+
+export interface HistoricalSnapshotRow {
+  id: number;
+  ca: string;
+  pipeline: string;
+  template_id: string;
+  captured_at: number;
+  age_minutes_since_first_sight: number;
+  price_usd: number | null;
+  market_cap_usd: number | null;
+  score: number;
+  hard_pass: number;
+  triggered: number;
+  snapshot_json: string;
+  decision_json: string;
+  narrative_score: number | null;
+}
+
+export interface CaptureScheduleRow {
+  ca: string;
+  pipeline: string;
+  first_seen_at: number;
+  next_capture_at: number;
+  captures_done: number;
+  status: "active" | "done";
+}
+
+export const snapshotsRepo = {
+  insert(args: {
+    ca: string;
+    pipeline: string;
+    templateId: string;
+    capturedAt: number;
+    ageMinutes: number;
+    priceUsd: number | null;
+    marketCapUsd: number | null;
+    score: number;
+    hardPass: boolean;
+    triggered: boolean;
+    snapshot: unknown;
+    decision: unknown;
+    narrativeScore: number | null;
+  }): void {
+    db.prepare(
+      `INSERT INTO historical_snapshots(
+        ca, pipeline, template_id, captured_at, age_minutes_since_first_sight,
+        price_usd, market_cap_usd, score, hard_pass, triggered,
+        snapshot_json, decision_json, narrative_score
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      args.ca,
+      args.pipeline,
+      args.templateId,
+      args.capturedAt,
+      args.ageMinutes,
+      args.priceUsd,
+      args.marketCapUsd,
+      args.score,
+      args.hardPass ? 1 : 0,
+      args.triggered ? 1 : 0,
+      JSON.stringify(args.snapshot),
+      JSON.stringify(args.decision),
+      args.narrativeScore,
+    );
+  },
+  inWindow(pipeline: string, fromMs: number, toMs: number): HistoricalSnapshotRow[] {
+    return db
+      .prepare(
+        `SELECT * FROM historical_snapshots
+         WHERE pipeline = ? AND captured_at BETWEEN ? AND ?
+         ORDER BY captured_at ASC`,
+      )
+      .all(pipeline, fromMs, toMs) as HistoricalSnapshotRow[];
+  },
+  forwardForToken(ca: string, fromMs: number, toMs: number): HistoricalSnapshotRow[] {
+    return db
+      .prepare(
+        `SELECT * FROM historical_snapshots
+         WHERE ca = ? AND captured_at BETWEEN ? AND ?
+         ORDER BY captured_at ASC`,
+      )
+      .all(ca, fromMs, toMs) as HistoricalSnapshotRow[];
+  },
+  pruneOlderThan(ms: number): number {
+    const info = db
+      .prepare(`DELETE FROM historical_snapshots WHERE captured_at < ?`)
+      .run(ms);
+    return Number(info.changes);
+  },
+};
+
+export const captureScheduleRepo = {
+  upsert(ca: string, pipeline: string, firstSeenAt: number, nextCaptureAt: number): void {
+    db.prepare(
+      `INSERT INTO capture_schedule(ca, pipeline, first_seen_at, next_capture_at, captures_done, status)
+       VALUES(?, ?, ?, ?, 0, 'active')
+       ON CONFLICT(ca, pipeline) DO NOTHING`,
+    ).run(ca, pipeline, firstSeenAt, nextCaptureAt);
+  },
+  due(now: number, limit: number): CaptureScheduleRow[] {
+    return db
+      .prepare(
+        `SELECT * FROM capture_schedule
+         WHERE status = 'active' AND next_capture_at <= ?
+         ORDER BY next_capture_at ASC LIMIT ?`,
+      )
+      .all(now, limit) as CaptureScheduleRow[];
+  },
+  advance(ca: string, pipeline: string, nextCaptureAt: number): void {
+    db.prepare(
+      `UPDATE capture_schedule
+       SET captures_done = captures_done + 1, next_capture_at = ?
+       WHERE ca = ? AND pipeline = ?`,
+    ).run(nextCaptureAt, ca, pipeline);
+  },
+  finish(ca: string, pipeline: string): void {
+    db.prepare(
+      `UPDATE capture_schedule SET status = 'done' WHERE ca = ? AND pipeline = ?`,
+    ).run(ca, pipeline);
+  },
+};

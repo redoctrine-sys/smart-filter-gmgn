@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { snapshotter } from "../capture/index.js";
 import { alertsRepo, mutedRepo, tokensSeenRepo, watchlistRepo } from "../db/repos.js";
 import { FilterEngine } from "../filter/engine.js";
 import { buildMetrics } from "../filter/metricsAdapter.js";
@@ -49,6 +50,10 @@ export class NewPairPipeline {
       if (!ca) continue;
       if (mutedRepo.is(ca)) continue;
       if (tokensSeenRepo.has(ca, PIPELINE)) continue;
+
+      // Register for periodic snapshot capture (backtester data) the moment
+      // we first see this CA, regardless of whether it ends up alerting.
+      snapshotter.register(ca, PIPELINE);
 
       const enriched = await gmgnClient.enrich(ca);
       if (!enriched) continue;

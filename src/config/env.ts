@@ -44,6 +44,11 @@ const envSchema = z.object({
   GMGN_BACKOFF_FACTOR: numStr(0.5),
   GMGN_RECOVER_FACTOR: numStr(1.1),
 
+  // Backtester
+  BACKTEST_ALMOST_BAND: numStr(15),
+  BACKTEST_BASE_SIZE_SOL: numStr(1.0),
+  BACKTEST_RETENTION_DAYS: numStr(30),
+
   // Misc
   LOG_LEVEL: z.string().default("info"),
   DB_PATH: z.string().default("./data/state.db"),

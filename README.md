@@ -175,10 +175,62 @@ smart-filter-gmgn/
 
 ---
 
-## Roadmap (v2 ideas)
+## Backtester / daily review
+
+The bot continuously captures snapshots of every token its pipelines see (whether or not it alerts) into `historical_snapshots`. The backtester replays those snapshots through the active template to simulate calls, runs the post-alert ladder against subsequent snapshots to compute exits, and posts a digest with summary stats plus a CSV attachment.
+
+### Capture schedule
+For each token, snapshots are taken at:
+- every **1 minute** for the first hour (60 captures)
+- every **5 minutes** for the next hour (12 captures)
+- every **1 hour** until 24 hours from first sight
+
+Old snapshots are pruned daily based on `BACKTEST_RETENTION_DAYS` (default 30).
+
+### Daily digest
+Fires at **08:00 Asia/Jakarta** (WIB) covering the trailing 24 hours, both pipelines, sent to the `post_alert` topic.
+
+### On-demand
+```
+/backtest                 # all pipelines, last 24h
+/backtest new_pair 7d     # new pair pipeline, last 7 days
+/backtest sleeper 3d      # sleeper pipeline, last 3 days
+/review all 14h           # alias of /backtest
+```
+
+Window grammar: `Nh` (hours) or `Nd` (days), e.g. `12h`, `3d`, `7d`.
+
+### What's in the digest
+- **Triggered** — calls where score ≥ threshold.
+- **Almost** — hard rules passed but score within `BACKTEST_ALMOST_BAND` (default ±15) of the threshold; useful to gauge whether the threshold is too strict.
+- For each bucket: `n`, win-rate, simple avg PnL%, weighted avg PnL%, total realized SOL, outcome distribution, avg time-to-TP.
+- **Metric lift** — for each scoring rule, win rate of triggered calls that passed the rule vs failed (sorted by lift). Tells you which rules actually predict winners.
+- **Top winners / losers** — top 5 each by realized SOL.
+- **CSV attachment** — one row per call with entry/exit details for offline analysis.
+
+### Exit simulator
+For each simulated entry, the simulator walks forward through that token's subsequent snapshots (up to 24h) and applies the same TP / SL / anti-rug ladder used in production:
+
+| Outcome | Trigger |
+|---|---|
+| `tp_2x` / `tp_5x` / `tp_10x` | price hits 2× / 5× / 10× of entry (highest reached counts) |
+| `sl_warning` | price drops 30% from entry |
+| `sl_hard` | price drops 50% from entry — closes the position |
+| `rug_lp_unlocked` | LP burn pct drops below 50% (heuristic) |
+| `expired` | none of the above hit within 24h — last seen price marks the exit |
+
+### Position sizing (score-weighted)
+```
+size_sol = clamp(score / threshold, 0.5, 2.5) * BACKTEST_BASE_SIZE_SOL
+```
+So a call at threshold = base size; a perfect-100 call (threshold 70) ≈ 1.43× base; below ~½ threshold is floored at 0.5× base. Realized SOL = `size_sol * pnl_pct`.
+
+---
+
+## Roadmap (v2+)
 
 - Multi-template per pipeline (run several in parallel; tag alerts by template).
 - Telegram inline override for narrative score (LLM auto + manual confirm).
-- Backtesting harness against historical GMGN exports.
 - Auto-buy via Trojan callback handler (with kill-switch).
 - Multi-user mode with per-user templates.
+- Richer rug detection in the exit simulator (use real `rug_signals` snapshot instead of LP heuristic).

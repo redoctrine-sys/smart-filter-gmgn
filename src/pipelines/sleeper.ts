@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { snapshotter } from "../capture/index.js";
 import { alertsRepo, mutedRepo, tokensSeenRepo, watchlistRepo } from "../db/repos.js";
 import { FilterEngine } from "../filter/engine.js";
 import { buildMetrics } from "../filter/metricsAdapter.js";
@@ -54,6 +55,8 @@ export class SleeperPipeline {
       const ca = shallow.summary.ca;
       if (!ca) continue;
       if (mutedRepo.is(ca)) continue;
+
+      snapshotter.register(ca, PIPELINE);
 
       const enriched = await gmgnClient.enrich(ca);
       if (!enriched) continue;
