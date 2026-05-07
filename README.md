@@ -123,6 +123,12 @@ global_fee_status, dex_paid_status, candle_confirm_3_green, near_fib_786,
 holder_stacked, volume_spike_ratio, smart_money_buys, narrative_score,
 launchpad`.
 
+Plus **wallet composition** metrics (lifetime since launch, captured for top 10 and top 100 holders — see "Wallet composition" section below):
+`top10_n, top10_avg_buy_sol, top10_avg_sell_sol, top10_avg_sol_balance,
+top10_max_sol_balance, top10_buy_sell_ratio, top100_n, top100_avg_buy_sol,
+top100_avg_sell_sol, top100_avg_sol_balance, top100_max_sol_balance,
+top100_buy_sell_ratio`.
+
 ---
 
 ## Post-alert lifecycle
@@ -172,6 +178,36 @@ smart-filter-gmgn/
 ├── .env.example
 └── README.md
 ```
+
+---
+
+## Wallet composition
+
+For every enriched token, the bot pulls the **top 100 holders** and computes lifetime cohort stats for both **top 10** and **top 100**:
+
+| Metric | Meaning |
+|---|---|
+| `top{10,100}_n` | actual holders found in the cohort (may be less than the cohort size for very fresh pairs) |
+| `top{10,100}_avg_buy_sol` | average SOL each holder spent buying this token (lifetime) |
+| `top{10,100}_avg_sell_sol` | average SOL each holder received selling this token (lifetime) |
+| `top{10,100}_avg_sol_balance` | average SOL sitting in each holder's wallet — proxy for wallet wealth |
+| `top{10,100}_max_sol_balance` | biggest wallet in the cohort by SOL balance |
+| `top{10,100}_buy_sell_ratio` | `avg_buy / avg_sell` — values >1 = accumulating, <1 = distributing |
+
+By default these metrics are **display + capture only** — they appear in alert cards and are stored in `historical_snapshots` for backtesting, but do not gate any alert. Examples for opting them into the filter (commented out in `templates/*.yaml`):
+
+```yaml
+# Avoid bot armies (top10 average wallet < 0.1 SOL = mostly snipers)
+- { metric: top10_avg_sol_balance, op: gte, value: 0.1, points: 10 }
+
+# Whale-backed (at least one big wallet in top10)
+- { metric: top10_max_sol_balance, op: gte, value: 50, points: 5 }
+
+# Top100 still accumulating
+- { metric: top100_buy_sell_ratio, op: gte, value: 1.5, points: 10 }
+```
+
+> Field-name normalisation lives in `src/gmgn/client.ts` (`BUY_FIELDS / SELL_FIELDS / BALANCE_FIELDS`). If GMGN renames a holder field, fix it once there and every cohort metric updates.
 
 ---
 

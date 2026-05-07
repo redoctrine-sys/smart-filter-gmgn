@@ -51,6 +51,31 @@ export interface HolderSnapshot {
   smartMoneyBuysLastHour: number;
 }
 
+/**
+ * Per-cohort wallet composition stats (lifetime since the token launched).
+ *
+ * - avgBuySol  — average SOL spent buying this token across the cohort.
+ * - avgSellSol — average SOL received selling this token across the cohort.
+ *                avgSell > avgBuy at the cohort level signals distribution.
+ * - avgSolBalance — average SOL sitting in each wallet (proxy for wallet
+ *                   wealth; tiny avg = bot army, big avg = whale-backed).
+ * - maxSolBalance — biggest wallet in the cohort by SOL balance.
+ * - n — actual number of holders found in the cohort (may be < cohort size
+ *       for very fresh pairs).
+ */
+export interface CohortStats {
+  n: number;
+  avgBuySol: number | null;
+  avgSellSol: number | null;
+  avgSolBalance: number | null;
+  maxSolBalance: number | null;
+}
+
+export interface WalletComposition {
+  top10: CohortStats;
+  top100: CohortStats;
+}
+
 export interface VolumeSignals {
   volumeSpikeRatio: number | null;
 }
@@ -68,4 +93,5 @@ export interface TokenSnapshot {
   candles: CandleSnapshot;
   holders: HolderSnapshot;
   volume: VolumeSignals;
+  walletComposition: WalletComposition;
 }

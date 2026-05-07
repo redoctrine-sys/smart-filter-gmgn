@@ -12,6 +12,7 @@ import {
   escapeMarkdownV2,
   formatPct,
   formatSol,
+  formatSolPair,
   formatUsd,
   shortAddr,
 } from "../utils/format.js";
@@ -49,6 +50,17 @@ function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: { narr
   );
   if (extras.narrative !== undefined) {
     lines.push(`Narrative: ${escapeMarkdownV2(extras.narrative.toFixed(1))}/10`);
+  }
+  const wc = snap.walletComposition;
+  if (wc.top10.n > 0 || wc.top100.n > 0) {
+    lines.push(
+      `Top10  buy/sell: ${escapeMarkdownV2(formatSolPair(wc.top10.avgBuySol, wc.top10.avgSellSol))} · ` +
+        `bal avg/max: ${escapeMarkdownV2(formatSolPair(wc.top10.avgSolBalance, wc.top10.maxSolBalance))}`,
+    );
+    lines.push(
+      `Top100 buy/sell: ${escapeMarkdownV2(formatSolPair(wc.top100.avgBuySol, wc.top100.avgSellSol))} · ` +
+        `bal avg/max: ${escapeMarkdownV2(formatSolPair(wc.top100.avgSolBalance, wc.top100.maxSolBalance))}`,
+    );
   }
   lines.push("");
   lines.push(`Score: *${decision.score}/100* \\(threshold ${decision.threshold}\\)`);

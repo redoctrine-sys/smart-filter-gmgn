@@ -63,3 +63,18 @@ boosters:
     op: equals
     value: paid
     points: 10
+
+# ---- Wallet composition rules (OFF by default — uncomment to enable) -
+# Sleeper is more sensitive to wallet quality (we hold longer). Examples:
+#
+# Healthy wallet base (top10 avg SOL >= 1):
+#   - { metric: top10_avg_sol_balance, op: gte, value: 1.0, points: 15 }
+#
+# Whale-backed (max SOL balance in top10 >= 100):
+#   - { metric: top10_max_sol_balance, op: gte, value: 100, points: 10 }
+#
+# Top100 still accumulating (lifetime buy/sell > 1.2):
+#   - { metric: top100_buy_sell_ratio, op: gte, value: 1.2, points: 10 }
+#
+# Avoid distribution phase (top10 selling more than buying):
+#   - { metric: top10_buy_sell_ratio, op: gte, value: 1.0, points: 10 }

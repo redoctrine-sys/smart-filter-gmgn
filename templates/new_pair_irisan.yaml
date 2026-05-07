@@ -69,3 +69,15 @@ boosters:
     op: equals
     value: paid
     points: 10
+
+# ---- Wallet composition rules (OFF by default — uncomment to enable) -
+# These are display-only by default. Uncomment to gate / score.
+#
+# Example: avoid bot armies (top10 average wallet < 0.1 SOL = mostly snipers)
+#   - { metric: top10_avg_sol_balance, op: gte, value: 0.1, points: 10 }
+#
+# Example: prefer buy-heavy top100 (lifetime accumulation > distribution)
+#   - { metric: top100_buy_sell_ratio, op: gte, value: 1.5, points: 10 }
+#
+# Example: at least one whale in top10 (max SOL balance >= 50)
+#   - { metric: top10_max_sol_balance, op: gte, value: 50, points: 5 }

@@ -15,6 +15,16 @@ export function formatSol(value: number | null | undefined, digits = 2): string 
   return `${value.toFixed(digits)} SOL`;
 }
 
+export function formatSolPair(
+  a: number | null | undefined,
+  b: number | null | undefined,
+  digits = 2,
+): string {
+  const fmt = (v: number | null | undefined) =>
+    v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(digits);
+  return `${fmt(a)}/${fmt(b)} SOL`;
+}
+
 export function shortAddr(addr: string, head = 4, tail = 4): string {
   if (!addr || addr.length <= head + tail + 3) return addr;
   return `${addr.slice(0, head)}...${addr.slice(-tail)}`;

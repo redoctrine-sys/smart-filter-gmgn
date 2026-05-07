@@ -4,12 +4,14 @@ import { logger } from "../utils/logger.js";
 import { limiter } from "./rateLimiter.js";
 import type {
   CandleSnapshot,
+  CohortStats,
   HolderSnapshot,
   RugSignals,
   TokenSecurity,
   TokenSnapshot,
   TokenSummary,
   VolumeSignals,
+  WalletComposition,
 } from "./types.js";
 
 /**
@@ -179,7 +181,7 @@ export const gmgnClient = {
       const [info, candles, holders, security] = await Promise.all([
         gmgnGet(`v1/sol/tokens/info`, { address: ca }),
         gmgnGet(`v1/sol/tokens/kline`, { address: ca, interval: "1m", limit: 30 }),
-        gmgnGet(`v1/sol/tokens/holders`, { address: ca, limit: 50 }),
+        gmgnGet(`v1/sol/tokens/holders`, { address: ca, limit: 100 }),
         gmgnGet(`v1/sol/tokens/security`, { address: ca }),
       ]);
       return {
@@ -188,6 +190,7 @@ export const gmgnClient = {
         candles: mapCandles(candles),
         holders: mapHolders(holders, info),
         volume: mapVolume(info, candles),
+        walletComposition: mapWalletComposition(holders),
       };
     } catch (err) {
       logger.warn({ ca, err: String(err) }, "enrich failed");
@@ -282,5 +285,69 @@ function toSnapshotShallow(raw: RawJson): TokenSnapshot | null {
     candles: { last3GreenInARow: false, lastClose: summary.priceUsd, nearFib786: false },
     holders: { topHolderHoldHours: null, holderStacked: false, smartMoneyBuysLastHour: 0 },
     volume: { volumeSpikeRatio: null },
+    walletComposition: { top10: emptyCohort(), top100: emptyCohort() },
+  };
+}
+
+function emptyCohort(): CohortStats {
+  return { n: 0, avgBuySol: null, avgSellSol: null, avgSolBalance: null, maxSolBalance: null };
+}
+
+/**
+ * Compute lifetime cohort stats from the holders payload.
+ *
+ * Per-holder fields we try (in order, first hit wins):
+ *   - SOL spent buying:  bought_sol | buy_sol | bought_amount_sol | buy_volume_sol
+ *   - SOL received sell: sold_sol   | sell_sol | sold_amount_sol  | sell_volume_sol
+ *   - wallet SOL balance: sol_balance | wallet_balance_sol | native_balance_sol
+ *
+ * If GMGN renames a field, fix the candidate list once here and the rest of
+ * the codebase keeps working.
+ */
+function mapWalletComposition(rawHolders: RawJson): WalletComposition {
+  const arr = pickArray(rawHolders);
+  if (arr.length === 0) {
+    return { top10: emptyCohort(), top100: emptyCohort() };
+  }
+  return {
+    top10: cohortStats(arr.slice(0, 10)),
+    top100: cohortStats(arr.slice(0, 100)),
+  };
+}
+
+const BUY_FIELDS = ["bought_sol", "buy_sol", "bought_amount_sol", "buy_volume_sol"];
+const SELL_FIELDS = ["sold_sol", "sell_sol", "sold_amount_sol", "sell_volume_sol"];
+const BALANCE_FIELDS = ["sol_balance", "wallet_balance_sol", "native_balance_sol"];
+
+function pickFirst(holder: RawJson, candidates: string[]): number | null {
+  for (const key of candidates) {
+    const v = num(holder[key]);
+    if (v !== null) return v;
+  }
+  return null;
+}
+
+function cohortStats(holders: RawJson[]): CohortStats {
+  if (holders.length === 0) return emptyCohort();
+  const buys: number[] = [];
+  const sells: number[] = [];
+  const balances: number[] = [];
+  for (const h of holders) {
+    const b = pickFirst(h, BUY_FIELDS);
+    const s = pickFirst(h, SELL_FIELDS);
+    const bal = pickFirst(h, BALANCE_FIELDS);
+    if (b !== null) buys.push(b);
+    if (s !== null) sells.push(s);
+    if (bal !== null) balances.push(bal);
+  }
+  const mean = (xs: number[]): number | null =>
+    xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length;
+  const max = (xs: number[]): number | null => (xs.length === 0 ? null : Math.max(...xs));
+  return {
+    n: holders.length,
+    avgBuySol: mean(buys),
+    avgSellSol: mean(sells),
+    avgSolBalance: mean(balances),
+    maxSolBalance: max(balances),
   };
 }
