@@ -3,6 +3,7 @@ import { loadTemplate } from "../filter/templates.js";
 import { env } from "../config/env.js";
 import { findSimulatedCalls } from "./engine.js";
 import { simulateExit } from "./exitSim.js";
+import { aggregateCategoryBreakdown, generateCategoryInsight } from "../hermes/categories.js";
 import type {
   BacktestSummary,
   MetricCorrelation,
@@ -57,6 +58,12 @@ export function review(opts: ReviewOptions): BacktestSummary {
   const triggered = reviewed.filter((c) => c.status === "triggered");
   const almost = reviewed.filter((c) => c.status === "almost");
 
+  const allRules = [...tpl.scoring, ...tpl.boosters];
+  const allMetrics = allRules.map((r) => r.metric);
+  const metricCorrs = metricCorrelation(triggered, allMetrics);
+  const categoryBreakdown = aggregateCategoryBreakdown(triggered, allRules);
+  const categoryInsight = generateCategoryInsight(categoryBreakdown);
+
   return {
     windowFrom: opts.fromMs,
     windowTo: opts.toMs,
@@ -68,7 +75,9 @@ export function review(opts: ReviewOptions): BacktestSummary {
     almostCount: almost.length,
     triggered: aggregate(triggered),
     almost: aggregate(almost),
-    metricCorrelation: metricCorrelation(triggered, tpl.scoring.map((r) => r.metric)),
+    metricCorrelation: metricCorrs,
+    categoryBreakdown,
+    categoryInsight,
     topWinners: pickTop(reviewed, 5, "winners"),
     topLosers: pickTop(reviewed, 5, "losers"),
   };
@@ -132,7 +141,9 @@ function metricCorrelation(triggered: ReviewedCall[], metrics: string[]): Metric
     let fail = 0;
     let failWin = 0;
     for (const c of triggered) {
-      const ev = c.decision.scoreEvals.find((e) => e.metric === metric);
+      const ev =
+        c.decision.scoreEvals.find((e) => e.metric === metric) ??
+        c.decision.boosterEvals.find((e) => e.metric === metric);
       if (!ev) continue;
       const isWin = c.exit.realizedSol > 0;
       if (ev.passed) {
@@ -156,6 +167,7 @@ function metricCorrelation(triggered: ReviewedCall[], metrics: string[]): Metric
   }
   return out.sort((a, b) => b.lift - a.lift);
 }
+
 
 function pickTop(calls: ReviewedCall[], n: number, kind: "winners" | "losers"): ReviewedCall[] {
   const sorted = [...calls].sort((a, b) =>

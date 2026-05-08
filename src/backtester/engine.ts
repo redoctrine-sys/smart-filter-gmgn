@@ -1,7 +1,8 @@
 import type { Pipeline } from "../capture/snapshotter.js";
 import { snapshotsRepo, type HistoricalSnapshotRow } from "../db/repos.js";
 import type { FilterDecision } from "../filter/types.js";
-import type { CallStatus, SimulatedCall } from "./types.js";
+import type { CallStatus, IntegritySnapshot, SimulatedCall } from "./types.js";
+import type { TokenSnapshot } from "../gmgn/types.js";
 
 /**
  * Identify simulated calls within the window for a single pipeline.
@@ -47,6 +48,7 @@ export function findSimulatedCalls(args: {
       entryMcUsd: row.market_cap_usd,
       ageMinutesAtEntry: row.age_minutes_since_first_sight,
       narrativeScore: row.narrative_score,
+      entrySnapshot: extractIntegrity(row),
     });
   }
   return calls;
@@ -62,4 +64,16 @@ function classify(
     return "almost";
   }
   return null;
+}
+
+function extractIntegrity(row: HistoricalSnapshotRow): IntegritySnapshot {
+  const snap = JSON.parse(row.snapshot_json) as TokenSnapshot;
+  return {
+    timestamp: row.captured_at,
+    marketCapUsd: row.market_cap_usd,
+    top10HoldersPct: snap.security?.top10HolderPct ?? null,
+    bundlerPct: snap.security?.bundlerPct ?? null,
+    devHoldingPct: snap.security?.devHoldingPct ?? null,
+    insiderHolderPct: snap.security?.insiderHolderPct ?? null,
+  };
 }

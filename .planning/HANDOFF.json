@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-08T03:51:43.430Z",
+  "source": "auto-postool",
+  "partial": false,
+  "phase": null,
+  "phase_name": null,
+  "phase_dir": null,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "auto-checkpoint",
+  "completed_tasks": [],
+  "remaining_tasks": [],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [],
+  "uncommitted_files": [
+    {
+      "status": "M",
+      "path": "src/backtester/engine.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/backtester/exitSim.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/backtester/reviewer.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/backtester/types.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/config/env.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/db/client.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/index.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/telegram/bot.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/telegram/digest.ts"
+    },
+    {
+      "status": "M",
+      "path": "src/telegram/dispatcher.ts"
+    },
+    {
+      "status": "??",
+      "path": ".claude/"
+    },
+    {
+      "status": "??",
+      "path": ".planning/"
+    },
+    {
+      "status": "??",
+      "path": "BLUEPRINT.md"
+    },
+    {
+      "status": "??",
+      "path": "prompt_claude_features.txt"
+    },
+    {
+      "status": "??",
+      "path": "src/hermes/"
+    }
+  ],
+  "next_action": null,
+  "context_notes": "Recent commits:\n7710ee0 Compute Stoch RSI on both 1m and 5m TFs; new pair templates use 1m\n4abd5bb Restructure into 3 categories (before/after migrated + sleeper) with Stoch RSI\n25d74e3 Add Token Age (oldest-in-cluster), Volume, and Runner-copycat detection for New Pair\n4db68e0 Add wallet composition analyzer (top 10 + top 100 cohort stats)\n19563e7 Add snapshot capture, backtester, exit simulator, daily digest"
+}

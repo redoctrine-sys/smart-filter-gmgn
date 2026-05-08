@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(node_modules\\\\.bin\\\\tsc --noEmit)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "PowerShell(Get-ChildItem \"D:\\\\Vibecoding\\\\smart-filter-gmgn\\\\node_modules\" -Force -Name | Where-Object { $_ -like \".bin\" })"
+    ]
+  }
+}

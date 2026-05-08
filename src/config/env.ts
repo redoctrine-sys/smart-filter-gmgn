@@ -30,6 +30,13 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional().default(""),
   GEMINI_MODEL: z.string().default("gemini-2.0-flash"),
 
+  // Hermes Agent
+  HERMES_ENABLED: z.string().optional().default("false").transform((v) => v === "true"),
+  HERMES_MODEL: z.string().optional().default(""),
+  HERMES_MAX_RESEARCH_MS: numStr(10000),
+  OPTIMIZER_AUTO_APPLY: z.string().optional().default("false").transform((v) => v === "true"),
+  OPTIMIZER_VARIANT_COUNT: numStr(3),
+
   // Polling
   BEFORE_MIGRATED_POLL_MS: numStr(4000),
   AFTER_MIGRATED_POLL_MS: numStr(8000),

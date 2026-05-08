@@ -1,5 +1,6 @@
 import { Markup } from "telegraf";
 import { bot, target } from "./bot.js";
+import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import {
   dexscreenerLink,
@@ -19,6 +20,15 @@ import {
 import type { TokenSnapshot } from "../gmgn/types.js";
 import type { FilterDecision } from "../filter/types.js";
 import type { Pipeline } from "../capture/snapshotter.js";
+import { loadTemplate } from "../filter/templates.js";
+import { HermesAgent } from "../hermes/agent.js";
+import { buildEntryRiskCard } from "../hermes/cardTemplate.js";
+
+const TEMPLATE_PATH_BY_PIPELINE: Record<Pipeline, () => string> = {
+  before_migrated: () => env.TEMPLATE_BEFORE_MIGRATED,
+  after_migrated: () => env.TEMPLATE_AFTER_MIGRATED,
+  sleeper: () => env.TEMPLATE_SLEEPER,
+};
 
 type DispatchTopic = Pipeline | "post_alert";
 
@@ -55,6 +65,7 @@ function pipelineHeading(pipeline: Pipeline): string {
       return "😴 *SLEEPER*";
   }
 }
+
 
 function buildBody(snap: TokenSnapshot, decision: FilterDecision, extras: AlertExtras): string {
   const s = snap.summary;
@@ -182,10 +193,38 @@ export async function sendAlert(
       message_thread_id: thread,
       ...kb,
     });
+
+    if (env.HERMES_ENABLED) {
+      void runHermesReply(pipeline, snap, decision, thread, msg.message_id);
+    }
+
     return { messageId: msg.message_id, threadId: thread ?? null };
   } catch (err) {
     logger.error({ err: String(err), ca: snap.summary.ca, pipeline }, "sendAlert failed");
     return { messageId: null, threadId: null };
+  }
+}
+
+async function runHermesReply(
+  pipeline: Pipeline,
+  snap: TokenSnapshot,
+  decision: FilterDecision,
+  thread: number | undefined,
+  replyTo: number,
+): Promise<void> {
+  try {
+    const tpl = loadTemplate(TEMPLATE_PATH_BY_PIPELINE[pipeline]());
+    const rules = [...tpl.scoring, ...tpl.boosters];
+    const agent = new HermesAgent();
+    const analysis = await agent.analyze(snap, decision, rules);
+    const card = buildEntryRiskCard(analysis);
+    await bot.telegram.sendMessage(target.chatId!, card, {
+      parse_mode: "MarkdownV2",
+      message_thread_id: thread,
+      reply_parameters: { message_id: replyTo },
+    });
+  } catch (err) {
+    logger.warn({ err: String(err), ca: snap.summary.ca }, "hermes reply failed");
   }
 }
 

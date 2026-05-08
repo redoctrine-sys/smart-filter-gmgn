@@ -8,6 +8,7 @@ import { PostAlertWatcher } from "./postAlert/watcher.js";
 import { limiter } from "./gmgn/rateLimiter.js";
 import { snapshotter } from "./capture/index.js";
 import { startDailyCron } from "./backtester/dailyCron.js";
+import { startWeeklyCron } from "./hermes/weeklyCron.js";
 
 async function main(): Promise<void> {
   logger.info(
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
   postAlert.start();
   snapshotter.start();
   startDailyCron();
+  startWeeklyCron();
 
   // Periodic health log so deployment platforms see something useful.
   setInterval(() => {

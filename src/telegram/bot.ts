@@ -4,7 +4,19 @@ import { getBotState, setBotState } from "../db/client.js";
 import { mutedRepo } from "../db/repos.js";
 import { logger } from "../utils/logger.js";
 import { runAndSendDigest } from "./digest.js";
+import { review } from "../backtester/reviewer.js";
+import { loadTemplate } from "../filter/templates.js";
+import { StrategyOptimizer } from "../hermes/strategyOptimizer.js";
+import type { StrategyReport, OptimizationLoopResult } from "../hermes/strategyOptimizer.js";
+import { applyVariant, revertTemplate } from "../hermes/templateMutator.js";
+import { escapeMarkdownV2 } from "../utils/format.js";
 import type { Pipeline } from "../capture/snapshotter.js";
+
+const TEMPLATE_PATH: Record<Pipeline, () => string> = {
+  before_migrated: () => env.TEMPLATE_BEFORE_MIGRATED,
+  after_migrated: () => env.TEMPLATE_AFTER_MIGRATED,
+  sleeper: () => env.TEMPLATE_SLEEPER,
+};
 
 export const bot = new Telegraf(env.TELEGRAM_BOT_TOKEN);
 
@@ -133,6 +145,193 @@ bot.command(["backtest", "review"], async (ctx) => {
     await runAndSendDigest({ pipeline: p, fromMs, toMs }, ctx.message.message_id);
   }
 });
+
+bot.command("optimize", async (ctx) => {
+  const parts = ctx.message.text.split(/\s+/).slice(1);
+  const pipelineArg = (parts[0] ?? "all").toLowerCase();
+  const windowArg = (parts[1] ?? "7d").toLowerCase();
+  const windowMs = parseWindow(windowArg);
+  if (!windowMs) {
+    await ctx.reply("Usage: /optimize [before_migrated|after_migrated|sleeper|all] [24h|3d|7d|14d]");
+    return;
+  }
+  const resolved = PIPELINE_ALIASES[pipelineArg];
+  if (!resolved) {
+    await ctx.reply(`Unknown pipeline '${pipelineArg}'. Try: ${Object.keys(PIPELINE_ALIASES).join(", ")}.`);
+    return;
+  }
+  const toMs = Date.now();
+  const fromMs = toMs - windowMs;
+  const pipelines: Pipeline[] = resolved === "all" ? [...ALL_PIPELINES] : [resolved];
+
+  await ctx.reply(`Running strategy optimizer (${pipelines.join(", ")}, ${windowArg})…`);
+
+  for (const p of pipelines) {
+    try {
+      if (env.HERMES_ENABLED) {
+        const optimizer = new StrategyOptimizer();
+        const loopResult = await optimizer.runOptimizationLoop(p, fromMs, toMs);
+        const text = buildLoopReport(p, windowArg, loopResult);
+        await ctx.reply(text, {
+          parse_mode: "MarkdownV2",
+          reply_parameters: { message_id: ctx.message.message_id },
+        });
+      } else {
+        const tpl = loadTemplate(TEMPLATE_PATH[p]());
+        const summary = review({ pipeline: p, fromMs, toMs });
+        if (summary.triggeredCount === 0) {
+          await ctx.reply(`No triggered calls for ${p} in ${windowArg}. Extend window.`);
+          continue;
+        }
+        const optimizer = new StrategyOptimizer();
+        const report = await optimizer.analyze(summary, [...tpl.scoring, ...tpl.boosters]);
+        const text = buildOptimizeReport(p, windowArg, summary.triggeredCount, summary.triggered.winRate, report);
+        await ctx.reply(text, {
+          parse_mode: "MarkdownV2",
+          reply_parameters: { message_id: ctx.message.message_id },
+        });
+      }
+    } catch (err) {
+      logger.error({ err: String(err), pipeline: p }, "optimize command failed");
+      await ctx.reply(`Optimizer failed for ${p}: ${String(err).slice(0, 120)}`);
+    }
+  }
+});
+
+bot.command("approve", async (ctx) => {
+  const parts = ctx.message.text.split(/\s+/).slice(1);
+  const pipelineArg = (parts[0] ?? "").toLowerCase();
+  const resolved = PIPELINE_ALIASES[pipelineArg];
+  if (!resolved || resolved === "all") {
+    await ctx.reply("Usage: /approve [before_migrated|after_migrated|sleeper]");
+    return;
+  }
+  const variantPath = getBotState(`optimizer_pending_variant_${resolved}`);
+  if (!variantPath) {
+    await ctx.reply(`No pending variant for ${resolved}. Run /optimize first.`);
+    return;
+  }
+  try {
+    applyVariant(resolved as Pipeline, variantPath);
+    setBotState(`optimizer_pending_variant_${resolved}`, "");
+    await ctx.reply(`✅ Variant applied for *${escapeMarkdownV2(resolved)}*\\.`, { parse_mode: "MarkdownV2" });
+  } catch (err) {
+    await ctx.reply(`Failed: ${String(err).slice(0, 120)}`);
+  }
+});
+
+bot.command("revert", async (ctx) => {
+  const parts = ctx.message.text.split(/\s+/).slice(1);
+  const pipelineArg = (parts[0] ?? "").toLowerCase();
+  const resolved = PIPELINE_ALIASES[pipelineArg];
+  if (!resolved || resolved === "all") {
+    await ctx.reply("Usage: /revert [before_migrated|after_migrated|sleeper]");
+    return;
+  }
+  try {
+    const backup = revertTemplate(resolved as Pipeline);
+    if (!backup) {
+      await ctx.reply(`No backup found for ${resolved}.`);
+      return;
+    }
+    await ctx.reply(`↩️ Template for *${escapeMarkdownV2(resolved)}* reverted from \`${escapeMarkdownV2(backup)}\`\\.`, { parse_mode: "MarkdownV2" });
+  } catch (err) {
+    await ctx.reply(`Failed: ${String(err).slice(0, 120)}`);
+  }
+});
+
+function buildLoopReport(
+  pipeline: Pipeline,
+  window: string,
+  result: OptimizationLoopResult,
+): string {
+  const lines: string[] = [
+    `*🔧 STRATEGY OPTIMIZER LOOP*`,
+    `Pipeline: \`${escapeMarkdownV2(pipeline)}\` · Window: ${escapeMarkdownV2(window)}`,
+    "",
+  ];
+
+  if (!result.declined) {
+    lines.push(`✅ ${escapeMarkdownV2(result.declineReason)}`);
+    return lines.join("\n");
+  }
+
+  lines.push(`⚠️ *Decline:* ${escapeMarkdownV2(result.declineReason)}`);
+  lines.push("");
+
+  if (result.variants.length === 0) {
+    lines.push("_Tidak ada variant yang berhasil_");
+    return lines.join("\n");
+  }
+
+  lines.push("*Variant Comparison:*");
+  lines.push(`\`${"Type".padEnd(12)}${"WR".padStart(6)}${"ROI".padStart(7)}${"n".padStart(5)}${"Scr".padStart(6)}\``);
+  for (const v of result.variants) {
+    const star = v === result.bestVariant ? "⭐" : "  ";
+    lines.push(
+      `${star}\`${v.type.padEnd(12)}${(v.winRate * 100).toFixed(1).padStart(5)}%${(v.avgPnlPct * 100).toFixed(1).padStart(6)}%${String(v.triggeredCount).padStart(5)} ${v.score.toFixed(2).padStart(5)}\``,
+    );
+  }
+
+  lines.push("");
+  lines.push(escapeMarkdownV2(result.recommendation));
+
+  if (result.autoApplied) {
+    lines.push("");
+    lines.push("_Auto\\-applied \\(OPTIMIZER\\_AUTO\\_APPLY=true\\)_");
+  }
+
+  return lines.join("\n");
+}
+
+function buildOptimizeReport(
+  pipeline: Pipeline,
+  window: string,
+  triggeredCount: number,
+  winRate: number,
+  report: StrategyReport,
+): string {
+  const lines: string[] = [];
+  lines.push(`*🔧 STRATEGY OPTIMIZER*`);
+  lines.push(
+    `Pipeline: \`${escapeMarkdownV2(pipeline)}\` · Window: ${escapeMarkdownV2(window)} · n=${triggeredCount} · WR=${escapeMarkdownV2((winRate * 100).toFixed(1))}%`,
+  );
+
+  lines.push("");
+  lines.push("*Recommendations:*");
+  if (report.recommendations.length === 0) {
+    lines.push("_Template sudah optimal_");
+  } else {
+    for (const r of report.recommendations) {
+      const icon = r.recommendation === "raise" ? "⬆️" : r.recommendation === "remove" ? "❌" : "⬇️";
+      const pts =
+        r.suggestedPoints !== undefined
+          ? `${r.currentPoints}→${r.suggestedPoints}pts`
+          : `${r.currentPoints}pts`;
+      lines.push(
+        `${icon} \`${escapeMarkdownV2(r.metric)}\` ${escapeMarkdownV2(pts)}`,
+      );
+      lines.push(`   _${escapeMarkdownV2(r.reason)}_`);
+    }
+  }
+
+  lines.push("");
+  lines.push("*Summary:*");
+  lines.push(escapeMarkdownV2(report.summary));
+
+  if (report.geminiNotes) {
+    lines.push("");
+    lines.push("*Gemini Analysis:*");
+    lines.push(escapeMarkdownV2(report.geminiNotes));
+  }
+
+  if (report.source === "rule_based") {
+    lines.push("");
+    lines.push("_\\(Rule\\-based analysis — set HERMES\\_ENABLED\\=true \\+ GEMINI\\_API\\_KEY for AI insights\\)_");
+  }
+
+  return lines.join("\n");
+}
 
 function parseWindow(arg: string): number | null {
   const m = arg.match(/^(\d+)([hd])$/);

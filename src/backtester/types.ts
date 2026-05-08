@@ -1,6 +1,26 @@
 import type { Pipeline } from "../capture/snapshotter.js";
 import type { FilterDecision } from "../filter/types.js";
 
+export interface IntegritySnapshot {
+  timestamp: number;
+  marketCapUsd: number | null;
+  top10HoldersPct: number | null;
+  bundlerPct: number | null;
+  devHoldingPct: number | null;
+  insiderHolderPct: number | null;
+}
+
+export type MetricCategory = "TA" | "Volume" | "Age" | "Narrative";
+
+export interface CategoryScore {
+  totalPoints: number;
+  maxPoints: number;
+  dominanceRatio: number;
+  topMetrics: string[];
+}
+
+export type CategoryBreakdown = Record<MetricCategory, CategoryScore>;
+
 export type CallStatus = "triggered" | "almost";
 
 export type { Pipeline };
@@ -31,18 +51,20 @@ export interface SimulatedCall {
   entryMcUsd: number | null;
   ageMinutesAtEntry: number;
   narrativeScore: number | null;
+  entrySnapshot?: IntegritySnapshot;
 }
 
 export interface SimulatedExit {
   outcome: Outcome;
   exitAt: number | null;
   exitPriceUsd: number | null;
-  pnlPct: number; // realized return on the position
-  maxGainPct: number; // max favourable excursion within window
-  maxDrawdownPct: number; // max adverse excursion within window
+  pnlPct: number;
+  maxGainPct: number;
+  maxDrawdownPct: number;
   timeToOutcomeMin: number | null;
   sizeSol: number;
   realizedSol: number;
+  exitSnapshot?: IntegritySnapshot;
 }
 
 export interface ReviewedCall extends SimulatedCall {
@@ -61,6 +83,8 @@ export interface BacktestSummary {
   triggered: PipelineStats;
   almost: PipelineStats;
   metricCorrelation: MetricCorrelation[];
+  categoryBreakdown: CategoryBreakdown;
+  categoryInsight: string;
   topWinners: ReviewedCall[];
   topLosers: ReviewedCall[];
 }

@@ -1,7 +1,7 @@
 import { env } from "../config/env.js";
-import { snapshotsRepo } from "../db/repos.js";
+import { snapshotsRepo, type HistoricalSnapshotRow } from "../db/repos.js";
 import type { TokenSnapshot } from "../gmgn/types.js";
-import type { Outcome, SimulatedCall, SimulatedExit } from "./types.js";
+import type { IntegritySnapshot, Outcome, SimulatedCall, SimulatedExit } from "./types.js";
 
 /**
  * Walk forward through the captured snapshots after entry and apply the
@@ -59,7 +59,7 @@ export function simulateExit(call: SimulatedCall, opts: Partial<SimOptions> = {}
 
   let maxGainPct = 0;
   let maxDrawdownPct = 0;
-  let firstOutcome: { outcome: Outcome; price: number; at: number } | null = null;
+  let firstOutcome: { outcome: Outcome; price: number; at: number; row: HistoricalSnapshotRow } | null = null;
   let lastSeenPrice: number | null = null;
 
   for (const row of forward) {
@@ -71,39 +71,33 @@ export function simulateExit(call: SimulatedCall, opts: Partial<SimOptions> = {}
       if (change > maxGainPct) maxGainPct = change;
       if (change < maxDrawdownPct) maxDrawdownPct = change;
 
-      // TP — pick the highest TP that already hit at this price; pricing the
-      // entire position at the highest hit gives an optimistic-but-bounded
-      // estimate (production sells partials, but for review we mark the call
-      // resolved at the highest TP reached).
       let tpHit: { outcome: Outcome; multiplier: number } | null = null;
       for (const tp of TP_LADDER) {
         if (price >= call.entryPriceUsd * tp.multiplier) tpHit = tp;
       }
       if (tpHit && (firstOutcome === null || isBetterTp(tpHit.outcome, firstOutcome.outcome))) {
-        firstOutcome = { outcome: tpHit.outcome, price, at: row.captured_at };
+        firstOutcome = { outcome: tpHit.outcome, price, at: row.captured_at, row };
       }
 
-      // SL — only set if no TP has resolved yet (TP wins ties on the same row).
       if (!firstOutcome) {
         for (const sl of SL_LADDER) {
           if (change <= sl.drop) {
-            firstOutcome = { outcome: sl.outcome, price, at: row.captured_at };
+            firstOutcome = { outcome: sl.outcome, price, at: row.captured_at, row };
             if (sl.severity === "hard") break;
           }
         }
       }
     }
 
-    // Anti-rug from snapshot
     const snapshot = JSON.parse(row.snapshot_json) as TokenSnapshot;
     const sec = snapshot.security;
     if (!firstOutcome && sec) {
-      // Heuristic: massive top10 shift or LP burn flag flipping bad means rug.
       if (sec.lpBurnedPct !== null && sec.lpBurnedPct < 50) {
         firstOutcome = {
           outcome: "rug_lp_unlocked",
           price: lastSeenPrice ?? call.entryPriceUsd,
           at: row.captured_at,
+          row,
         };
       }
     }
@@ -115,9 +109,10 @@ export function simulateExit(call: SimulatedCall, opts: Partial<SimOptions> = {}
   if (!firstOutcome) {
     const exitPrice = lastSeenPrice;
     const pnl = exitPrice ? (exitPrice - call.entryPriceUsd) / call.entryPriceUsd : 0;
+    const lastRow = forward[forward.length - 1];
     return {
       outcome: "expired",
-      exitAt: forward[forward.length - 1]?.captured_at ?? null,
+      exitAt: lastRow?.captured_at ?? null,
       exitPriceUsd: exitPrice,
       pnlPct: pnl,
       maxGainPct,
@@ -125,6 +120,7 @@ export function simulateExit(call: SimulatedCall, opts: Partial<SimOptions> = {}
       timeToOutcomeMin: null,
       sizeSol,
       realizedSol: sizeSol * pnl,
+      exitSnapshot: lastRow ? extractIntegrity(lastRow) : undefined,
     };
   }
 
@@ -139,6 +135,7 @@ export function simulateExit(call: SimulatedCall, opts: Partial<SimOptions> = {}
     timeToOutcomeMin: (firstOutcome.at - call.entryAt) / 60_000,
     sizeSol,
     realizedSol: sizeSol * pnlPct,
+    exitSnapshot: extractIntegrity(firstOutcome.row),
   };
 }
 
@@ -165,4 +162,16 @@ function emptyExit(sizeSol: number, outcome: Outcome, exitAt: number | null): Si
 function isBetterTp(a: Outcome, b: Outcome): boolean {
   const order: Outcome[] = ["tp_2x", "tp_5x", "tp_10x"];
   return order.indexOf(a) > order.indexOf(b);
+}
+
+function extractIntegrity(row: HistoricalSnapshotRow): IntegritySnapshot {
+  const snap = JSON.parse(row.snapshot_json) as TokenSnapshot;
+  return {
+    timestamp: row.captured_at,
+    marketCapUsd: row.market_cap_usd,
+    top10HoldersPct: snap.security?.top10HolderPct ?? null,
+    bundlerPct: snap.security?.bundlerPct ?? null,
+    devHoldingPct: snap.security?.devHoldingPct ?? null,
+    insiderHolderPct: snap.security?.insiderHolderPct ?? null,
+  };
 }

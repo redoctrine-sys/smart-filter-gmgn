@@ -10,6 +10,8 @@ import { env } from "../config/env.js";
 import { escapeMarkdownV2 } from "../utils/format.js";
 import type { BacktestSummary, Outcome, ReviewedCall } from "../backtester/types.js";
 import { logger } from "../utils/logger.js";
+import { StrategyOptimizer } from "../hermes/strategyOptimizer.js";
+import type { StrategyReport } from "../hermes/strategyOptimizer.js";
 
 interface DigestArgs {
   pipeline: Pipeline;
@@ -52,7 +54,17 @@ export async function runAndSendDigest(args: DigestArgs, replyTo?: number): Prom
   const reviewed: ReviewedCall[] = calls.map((c) => ({ ...c, exit: simulateExit(c) }));
   const csv = callsToCsv(summary, reviewed);
 
-  const text = formatDigest(summary);
+  let optimizerReport: StrategyReport | null = null;
+  if (env.HERMES_ENABLED && summary.triggeredCount > 0) {
+    try {
+      const optimizer = new StrategyOptimizer();
+      optimizerReport = await optimizer.analyze(summary, [...tpl.scoring, ...tpl.boosters]);
+    } catch (err) {
+      logger.warn({ err: String(err) }, "strategy optimizer failed — digest continues");
+    }
+  }
+
+  const text = formatDigest(summary, optimizerReport);
   const thread = POST_ALERT_TOPIC() ? Number(POST_ALERT_TOPIC()) : undefined;
 
   try {
@@ -75,7 +87,7 @@ export async function runAndSendDigest(args: DigestArgs, replyTo?: number): Prom
   }
 }
 
-function formatDigest(s: BacktestSummary): string {
+function formatDigest(s: BacktestSummary, optimizerReport?: StrategyReport | null): string {
   const head = DIGEST_HEADING[s.pipeline];
   const fromIso = new Date(s.windowFrom).toISOString().slice(0, 16).replace("T", " ");
   const toIso = new Date(s.windowTo).toISOString().slice(0, 16).replace("T", " ");
@@ -88,6 +100,30 @@ function formatDigest(s: BacktestSummary): string {
   lines.push("");
   lines.push("*Almost*  \\(score within band of threshold\\)");
   lines.push(formatStats(s.almost));
+
+  if (s.categoryInsight) {
+    lines.push("");
+    lines.push(`*Insight:* ${escapeMarkdownV2(s.categoryInsight)}`);
+  }
+
+  {
+    const cats = (["TA", "Volume", "Age", "Narrative"] as const).filter(
+      (cat) => s.categoryBreakdown[cat].maxPoints > 0,
+    );
+    if (cats.length > 0) {
+      lines.push("");
+      lines.push("*Category Strength* \\(triggered only\\)");
+      for (const cat of cats) {
+        const cs = s.categoryBreakdown[cat];
+        const pct = (cs.dominanceRatio * 100).toFixed(0);
+        const bar = "█".repeat(Math.round(cs.dominanceRatio * 10)) + "░".repeat(10 - Math.round(cs.dominanceRatio * 10));
+        const top = cs.topMetrics.slice(0, 2).map((m) => escapeMarkdownV2(m)).join(", ");
+        lines.push(
+          `\`${bar}\` *${escapeMarkdownV2(cat)}* ${escapeMarkdownV2(pct)}%${top ? " — " + top : ""}`,
+        );
+      }
+    }
+  }
 
   if (s.metricCorrelation.length > 0) {
     lines.push("");
@@ -123,6 +159,11 @@ function formatDigest(s: BacktestSummary): string {
       );
     }
   }
+
+  if (optimizerReport) {
+    lines.push(...formatOptimizerSection(optimizerReport));
+  }
+
   return lines.join("\n");
 }
 
@@ -151,4 +192,32 @@ function formatDistribution(d: Record<Outcome, number>): string {
 
 function shortCa(ca: string): string {
   return ca.length <= 10 ? ca : `${ca.slice(0, 4)}…${ca.slice(-4)}`;
+}
+
+function formatOptimizerSection(report: StrategyReport): string[] {
+  const lines: string[] = ["", "*🔧 Strategy Recommendation*"];
+
+  if (report.recommendations.length === 0) {
+    lines.push("_Template sudah optimal berdasarkan data ini_");
+  } else {
+    for (const r of report.recommendations) {
+      const icon = r.recommendation === "raise" ? "⬆️" : r.recommendation === "remove" ? "❌" : "⬇️";
+      const pts =
+        r.suggestedPoints !== undefined
+          ? `${r.currentPoints}→${r.suggestedPoints}pts`
+          : `${r.currentPoints}pts`;
+      lines.push(
+        `${icon} \`${escapeMarkdownV2(r.metric)}\` ${escapeMarkdownV2(pts)} \\(${escapeMarkdownV2(r.reason)}\\)`,
+      );
+    }
+  }
+
+  lines.push(`_${escapeMarkdownV2(report.summary)}_`);
+
+  if (report.geminiNotes) {
+    lines.push("");
+    lines.push(`📝 ${escapeMarkdownV2(report.geminiNotes)}`);
+  }
+
+  return lines;
 }

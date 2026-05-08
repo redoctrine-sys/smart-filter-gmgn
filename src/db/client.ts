@@ -113,6 +113,31 @@ CREATE TABLE IF NOT EXISTS recent_token_meta (
   first_seen_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rtm_first_seen ON recent_token_meta(first_seen_at);
+
+CREATE TABLE IF NOT EXISTS optimizer_weekly_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline TEXT NOT NULL,
+  week_start_ms INTEGER NOT NULL,
+  triggered_count INTEGER NOT NULL,
+  win_rate REAL NOT NULL,
+  avg_pnl_pct REAL NOT NULL,
+  total_realized_sol REAL NOT NULL,
+  recorded_at INTEGER NOT NULL,
+  UNIQUE(pipeline, week_start_ms)
+);
+
+CREATE TABLE IF NOT EXISTS optimizer_variants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline TEXT NOT NULL,
+  variant_type TEXT NOT NULL,
+  variant_path TEXT NOT NULL,
+  win_rate REAL NOT NULL,
+  avg_pnl_pct REAL NOT NULL,
+  triggered_count INTEGER NOT NULL,
+  score REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ov_pipeline ON optimizer_variants(pipeline, created_at);
 `;
 
 db.exec(SCHEMA);
