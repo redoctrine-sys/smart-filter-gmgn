@@ -71,9 +71,10 @@ export function revertTemplate(pipeline: Pipeline): string | null {
     .sort()
     .reverse();
 
-  if (files.length === 0) return null;
+  const [latestFile] = files;
+  if (!latestFile) return null;
 
-  const latestBackup = join(backupDir, files[0]);
+  const latestBackup = join(backupDir, latestFile);
   const activePath = TEMPLATE_PATH[pipeline]();
   copyFileSync(latestBackup, activePath);
   logger.info({ from: latestBackup, to: activePath }, "template reverted from backup");

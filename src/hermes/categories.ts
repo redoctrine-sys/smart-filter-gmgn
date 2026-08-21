@@ -187,6 +187,7 @@ export function generateCategoryInsight(breakdown: CategoryBreakdown): string {
 
   if (strong.length === 0) {
     const top = cats[0];
+    if (!top) return "Tidak ada data kategori";
     return `Dominan di ${top.cat} (${(top.ratio * 100).toFixed(0)}%)`;
   }
 
