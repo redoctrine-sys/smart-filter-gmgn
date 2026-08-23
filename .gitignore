@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.env.*.local
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/smart_money_wallets.csv
+.DS_Store
+.idea/
+.vscode/
+coverage/

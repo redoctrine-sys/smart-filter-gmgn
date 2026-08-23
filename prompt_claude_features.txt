@@ -1,0 +1,214 @@
+Tugas: Implementasi 2 fitur baru secara berurutan, dengan arsitektur Hermes Agent + AutoResearch.
+Project: smart-filter-gmgn
+
+## Konteks Arsitektur
+
+Saat ini sistem menggunakan pipeline polling + FilterEngine deterministik (YAML template → hard_rules/scoring/boosters → static score). 
+Kita akan MENAMBAHKAN layer agentic di atas existing pipeline, BUKAN mengganti. Pipeline tetap jalan sebagai pre-filter, lalu Hermes Agent layer melakukan reasoning + research sebelum alert dikirim.
+
+Flow baru:
+  Pipeline (existing) → Token lolos filter → HermesAgent.analyze(token) → AutoResearch → Category Insight + Entry/Risk Plan → Enhanced Alert ke Telegram
+
+## Langkah Eksekusi
+
+### Step 0: Analisa Codebase
+1. Pelajari file-file berikut untuk memahami data flow:
+   - src/filter/engine.ts (FilterEngine, evalRule)
+   - src/filter/metricsAdapter.ts (buildMetrics — semua metrik yang tersedia)
+   - src/filter/types.ts (FilterDecision, RuleEval, FilterTemplate)
+   - src/backtester/reviewer.ts (metricCorrelation logic)
+   - src/backtester/types.ts (MetricCorrelation, BacktestSummary)
+   - src/telegram/dispatcher.ts (sendAlert, buildBody)
+   - src/telegram/digest.ts (formatDigest — cara tampilkan metric lift)
+   - src/narrative/gemini.ts (existing Gemini integration pattern)
+   - src/pipelines/afterMigrated.ts (contoh pipeline flow)
+   - templates/after_migrated_irisan.yaml (contoh scoring template)
+
+### Step 1: Buat Category Mapping (src/hermes/categories.ts) [NEW]
+Buat mapping metrik → kategori. Grouping berdasarkan metricsAdapter.ts:
+
+  TA (Technical Analysis):
+    - drop_from_ath_pct, candle_confirm_3_green, near_fib_786
+    - stoch_rsi_k_1m, stoch_rsi_safe_1m, stoch_rsi_signal_1m
+    - stoch_rsi_k_5m, stoch_rsi_safe_5m, stoch_rsi_signal_5m
+    - stoch_rsi_overbought_*, stoch_rsi_oversold_*
+    - ath_price_usd
+
+  Volume:
+    - volume_spike_ratio, volume_5m_usd, volume_1h_usd, volume_24h_usd
+    - market_cap_usd, global_fee_sol, global_fee_status
+    - top10_avg_buy_sol, top10_avg_sell_sol, top10_buy_sell_ratio
+    - top100_avg_buy_sol, top100_avg_sell_sol, top100_buy_sell_ratio
+
+  Age / On-Chain Integrity:
+    - age_hours, age_minutes, migration_status
+    - mint_authority, freeze_authority, honeypot
+    - top_10_holder_pct, top_1_holder_pct, dev_holding_pct
+    - insider_holder_pct, bundler_pct
+    - holder_stacked, smart_money_buys
+    - dex_paid_status, socials_count
+
+  Narrative:
+    - narrative_score
+    - is_oldest_in_cluster, cluster_size, earlier_similar_count
+    - is_copycat_of_runner, copycat_similarity, copycat_runner_symbol
+
+Buat fungsi:
+  - categorizeScoringMetrics(scoreEvals: RuleEval[]): Record<Category, CategoryScore>
+  - generateCategoryInsight(scores: Record<Category, CategoryScore>): string
+    Output contoh: "Score kuat di TA dan Volume" atau "Dominan di Narrative, lemah di Age"
+
+### Step 2: Integrasikan Category Insight ke Backtester Reviewer
+File: src/backtester/reviewer.ts
+1. Import categorizeScoringMetrics dari hermes/categories.ts
+2. Tambahkan field baru di BacktestSummary:
+   - categoryBreakdown: Record<Category, { totalPoints, maxPoints, dominanceRatio, topMetrics }>
+   - categoryInsight: string (teks otomatis dari generateCategoryInsight)
+3. Di function review(), setelah metricCorrelation dihitung, tambahkan:
+   - Hitung categoryBreakdown dari semua scoreEvals triggered calls
+   - Generate categoryInsight
+4. Update src/backtester/types.ts dengan type baru
+
+### Step 3: Tampilkan Category Insight di Digest
+File: src/telegram/digest.ts
+1. Di formatDigest(), setelah section "Metric lift", tambahkan section baru:
+   "*Category Strength*"
+   Tampilkan breakdown per kategori: TA xx%, Volume xx%, Age xx%, Narrative xx%
+   Dan insight text: "Score-nya kuat di TA dan Volume"
+
+### Step 4: Buat Hermes Agent dengan AutoResearch (src/hermes/agent.ts) [NEW]
+Ini adalah layer agentic baru. Gunakan pattern yang sama dengan src/narrative/gemini.ts (Gemini API).
+
+1. Buat HermesAgent class:
+   - Input: TokenSnapshot + FilterDecision + CategoryBreakdown
+   - Method: analyze(token, decision) → HermesAnalysis
+
+2. AutoResearch prompt ke Gemini:
+   - Berikan semua data metrik token yang sudah ada
+   - Berikan category breakdown dan insight
+   - Minta Gemini untuk:
+     a) Validasi apakah category insight masuk akal
+     b) Berikan risk assessment (1-10)
+     c) Generate entry plan: area buy, DCA levels.
+        ATURAN SIZING WAJIB: Max 0.1 SOL per buy. Max total position 0.5 SOL (5 entries max).
+        Volume dan Market Cap menentukan agresivitas DCA:
+        - Aggressive: DCA di -10%, trigger jika vol > $2K. Max 5 entries.
+        - Moderate: DCA di -15%, trigger jika vol > $5K + TA confirm. Max 4 entries.
+        - Safe: DCA di -25%, trigger jika vol spike > 3x + TA confirm. Max 2 entries.
+     d) Generate risk plan: stop loss level, take profit targets (2x, 5x, 10x), position sizing suggestion
+     e) Generate conviction level: LOW / MEDIUM / HIGH / VERY HIGH
+
+3. Output interface HermesAnalysis:
+   - categoryInsight: string
+   - riskAssessment: number (1-10)
+   - conviction: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH"
+   - entryPlan: { zoneLow, zoneHigh, dcaLevels[], maxEntries, entrySizeSol, reasoning }
+   - riskPlan: { stopLoss, tp2x, tp5x, tp10x, reasoning }
+   - strategyType: "AGGRESSIVE" | "MODERATE" | "SAFE"
+   - researchNotes: string (1-2 kalimat insight tambahan dari Gemini)
+
+### Step 5: Buat Entry/Risk Plan Card Template (src/hermes/cardTemplate.ts) [NEW]
+1. Buat fungsi buildEntryRiskCard(analysis: HermesAnalysis): string
+   Format Telegram MarkdownV2:
+   ```
+   ┌─ 📋 HERMES PLAN ─────────────────────────────────────────┐
+   │ Strategy: 🟡 MODERATE · Conviction: 🟢 HIGH · Risk: 3/10
+   │
+   │ 💰 Position Sizing
+   │ Entry size:  0.1 SOL per buy
+   │ Max total:   0.5 SOL (5 entries max)
+   │ DCA trigger: -15% dari avg entry
+   │
+   │ 🎯 Entry Zone
+   │ Buy:  $0.00012 − $0.00015
+   │ DCA1: $0.00010 (-17%)  → 0.1 SOL
+   │ DCA2: $0.00008 (-33%)  → 0.1 SOL
+   │ DCA3: $0.00006 (-50%)  → 0.1 SOL (if vol > $5K/5m)
+   │
+   │ 🛡 Risk Plan
+   │ SL:  $0.00004 (-67% dari entry)
+   │ TP1: $0.00030 (+100%)  sell 30%
+   │ TP2: $0.00075 (+400%)  sell 30%
+   │ TP3: $0.00150 (+900%)  sell 20%, rest moonbag
+   │
+   │ 💡 Kuat di TA dan Volume
+   │ 📝 Vol $12K/5m, MC $45K → Moderate sizing
+   └────────────────────────────────────────────────────────┘
+   ```
+
+### Step 6: Integrasikan ke Alert Pipeline
+File: src/telegram/dispatcher.ts
+1. Import HermesAgent dan buildEntryRiskCard
+2. Di sendAlert(), setelah buildBody():
+   - Panggil HermesAgent.analyze() dengan token data
+   - Append buildEntryRiskCard() ke body message
+   - Atau kirim sebagai reply message terpisah (lebih clean)
+3. Tambahkan flag env: HERMES_ENABLED (default false) agar bisa toggle on/off
+   Jika HERMES_ENABLED=false, alert tetap seperti sebelumnya (backward compatible)
+
+File: src/pipelines/afterMigrated.ts (dan beforeMigrated.ts, sleeper.ts)
+1. Setelah sendAlert(), jika HERMES_ENABLED:
+   - Panggil HermesAgent.analyze()
+   - Kirim reply dengan Entry/Risk Card ke thread yang sama
+
+### Step 7: Update Config
+File: src/config/env.ts
+- Tambahkan HERMES_ENABLED: boolean (default false)
+- Tambahkan HERMES_MODEL: string (default sama dengan GEMINI_MODEL)
+- Tambahkan HERMES_MAX_RESEARCH_MS: number (timeout, default 10000)
+- Tambahkan OPTIMIZER_AUTO_APPLY: boolean (default false)
+- Tambahkan OPTIMIZER_VARIANT_COUNT: number (default 3)
+
+## Catatan Penting
+- JANGAN ubah logic FilterEngine atau template YAML yang sudah ada
+- Hermes Agent adalah LAYER TAMBAHAN, bukan pengganti
+- Semua fitur baru harus bisa di-toggle via env variable
+- Gunakan pattern error handling yang sama dengan narrative/gemini.ts (fallback graceful)
+- Entry/Risk plan harus tetap muncul meski Gemini error (gunakan fallback dari data statis)
+
+---
+### Fitur 3: Strategy Optimizer Loop (Feedback Loop) [NEW]
+Fitur ini adalah sistem reviewer mingguan per pipeline yang mendeteksi penurunan performa, meng-generate 3 strategy variants, mem-backtest semuanya, dan merekomendasikan variant terbaik berdasarkan performa volume/mcap.
+
+1. Buat `src/hermes/performanceTracker.ts`:
+   - Simpan historical weekly stats per pipeline (win rate, PnL, realized SOL, calls).
+   - Buat method untuk mendeteksi `decline` minggu-ke-minggu: Trigger jika ROI (avg PnL) turun drastis > 15% minus.
+
+2. Buat `src/hermes/strategyOptimizer.ts`:
+   - Dijalankan via weekly cron (setiap Senin 08:00 WIB).
+   - Cek `performanceTracker.compare()`. Jika performa stabil, skip (tidak lanjut optimasi).
+   - Jika terdeteksi `decline`, mulai fase optimasi:
+     a) Analisis metric lift 7 hari terakhir (cari dead weight & hidden gems).
+     b) Generate 3 variant YAML template:
+        - 🔴 Aggressive: threshold turun, poin TA naik. Evaluasi volume min $2K, DCA lebih sering.
+        - 🟡 Moderate: balanced tweak dari data lift. Evaluasi volume min $5K, DCA butuh konfirmasi TA.
+        - 🟢 Safe: threshold naik, hapus dead weight metric. Evaluasi volume min $10K, minim DCA.
+     c) **Backtest SETIAP variant** terhadap data 7 hari terakhir secara independen. Tweak metric `base_size_sol` dan `dca_aggressiveness` pada simulator exit sesuai tipe strategy.
+     d) Bandingkan metrik akhir: win rate, avg PnL, total realized SOL, max drawdown, total calls.
+     e) Pilih variant terbaik dan laporkan ke Telegram.
+
+3. Buat `src/hermes/templateMutator.ts`:
+   - Helper untuk membaca template `.yaml` saat ini dan mem-parsing output LLM menjadi `.yaml` baru tanpa merusak format aslinya.
+
+4. Update Telegram Commands & Integrasi (`src/telegram/bot.ts`):
+   - Command `/optimize <pipeline> <window>`: trigger manual jalankan flow `performanceTracker` -> `strategyOptimizer`.
+   - Command `/approve <pipeline>`: apply variant rekomendasi menjadi template aktif (menggantikan YAML lama).
+   - Command `/revert <pipeline>`: kembalikan YAML ke versi sebelumnya (rollback).
+   - Pastikan output di telegram memunculkan tabel komparasi 3 strategy, menunjukkan expected win rate dan jumlah calls berdasar hasil backtest, lalu mencantumkan status apakah sistem dalam mode `AUTO_APPLY` atau butuh `/approve`.
+
+---
+### Fitur 4: Backtester Entry/Exit Integrity Snapshot [NEW]
+Fitur ini bertugas melakukan snapshot otomatis terhadap metrik on-chain (terutama integritas token seperti jumlah top holder, persentase bundler, dev holding, market cap) pada SAAT TEPAT simulasi entry dan exit (TP/SL/Rug) di dalam backtester.
+
+1. Update `src/backtester/types.ts`:
+   - Tambahkan tipe `IntegritySnapshot` yang berisi: `timestamp`, `marketCap`, `top10HoldersPct`, `bundlerPct`, `devHoldingPct`, dll.
+   - Update `SimulatedCall` atau `ExitSimulationResult` untuk menyimpan `entrySnapshot` dan `exitSnapshot`.
+
+2. Update `src/backtester/exitSim.ts`:
+   - Saat backtester mensimulasikan ENTRY (saat token lolos filter), tangkap data `IntegritySnapshot` saat itu.
+   - Saat backtester mensimulasikan EXIT (ketika menyentuh TP, SL, atau Rug), tangkap lagi `IntegritySnapshot` pada timestamp exit tersebut.
+   - Hal ini memungkinkan kita membandingkan perubahan distribusi token dari titik masuk hingga titik keluar (misalnya: apakah bundler dump selama hold time?).
+
+3. Integrasikan ke Reviewer (`src/backtester/reviewer.ts`):
+   - Gunakan data `entrySnapshot` vs `exitSnapshot` ini untuk menganalisa korelasi rug/SL dengan pergerakan wallet top holder atau bundler.
+   - Insight dari perbandingan ini dapat diumpankan kembali ke `strategyOptimizer` (misal: "Jika bundler > 20% saat entry, 80% berujung SL karena bundler exit. Rekomendasikan pinalti poin bundler").

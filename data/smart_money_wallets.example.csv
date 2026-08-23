@@ -1,0 +1,6 @@
+address,source,label
+# Example header — replace rows below with your imports.
+# Sources: gmgn_tag (tagged smart-money on GMGN), kol_list (your KOL whitelist),
+#          manual (anything else). The `label` column is freeform.
+ExampleAddressDoNotUse111111111111111111111,gmgn_tag,sniper_pro
+AnotherExampleWallet22222222222222222222222,kol_list,@some_kol

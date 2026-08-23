@@ -1,0 +1,37 @@
+# =====================================================================
+# SLEEPER — low-cap micro-cap (MC 7K-25K) tidur dengan good meme +
+# narrative + slow build. Patience play, longer hold.
+#
+# Re-weighted per the detailed analysis (Mei 2026):
+# - Narrative + meme = top weight (Ponyin "good meme di sleeper",
+#   Pradono "meme nya lucu, slowcook")
+# - Volume spike 3x average (Badidoyo verbatim)
+# - Holder stacked + low bundler (semua trader)
+# - Fib 0.786 + Stoch RSI safe = TA confirmation
+# =====================================================================
+id: sleeper_irisan
+name: "Irisan Sleeper (slowcook, narrative play)"
+pipeline: sleeper
+score_threshold: 70
+
+hard_rules:
+  - { metric: market_cap_usd,    op: between, value: [7000, 25000] }
+  - { metric: mint_authority,    op: equals,  value: revoked }
+  - { metric: freeze_authority,  op: equals,  value: revoked }
+  - { metric: socials_count,     op: gte,     value: 1 }
+  - { metric: age_hours,         op: gt,      value: 24 }
+  - { metric: honeypot,          op: equals,  value: false }
+
+scoring:
+  # Narrative is king at this phase (Ponyin Vol.1 "good meme di sleeper")
+  - { metric: narrative_score,        op: gte,    value: 7,     points: 25 }
+  - { metric: volume_spike_ratio,     op: gte,    value: 3,     points: 20 }   # Badidoyo verbatim
+  - { metric: holder_stacked,         op: equals, value: true,  points: 15 }
+  - { metric: near_fib_786,           op: equals, value: true,  points: 15 }
+  - { metric: stoch_rsi_safe_5m,      op: equals, value: true,  points: 10 }   # Andri overbought warning, 5m TF for slowcook
+  - { metric: global_fee_status,      op: equals, value: green, points: 15 }
+  - { metric: bundler_pct,            op: lt,     value: 6,     points: 10 }
+
+boosters:
+  - { metric: smart_money_buys,       op: gte,    value: 2,     points: 10 }
+  - { metric: dex_paid_status,        op: equals, value: paid,  points: 10 }

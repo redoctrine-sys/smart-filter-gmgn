@@ -1,0 +1,223 @@
+import { Input } from "telegraf";
+import { bot, target } from "./bot.js";
+import type { Pipeline } from "../capture/snapshotter.js";
+import { callsToCsv } from "../backtester/csvExport.js";
+import { review } from "../backtester/reviewer.js";
+import { simulateExit } from "../backtester/exitSim.js";
+import { findSimulatedCalls } from "../backtester/engine.js";
+import { loadTemplate } from "../filter/templates.js";
+import { env } from "../config/env.js";
+import { escapeMarkdownV2 } from "../utils/format.js";
+import type { BacktestSummary, Outcome, ReviewedCall } from "../backtester/types.js";
+import { logger } from "../utils/logger.js";
+import { StrategyOptimizer } from "../hermes/strategyOptimizer.js";
+import type { StrategyReport } from "../hermes/strategyOptimizer.js";
+
+interface DigestArgs {
+  pipeline: Pipeline;
+  fromMs: number;
+  toMs: number;
+  almostBand?: number;
+}
+
+const DIGEST_TEMPLATE_PATH: Record<Pipeline, () => string> = {
+  before_migrated: () => env.TEMPLATE_BEFORE_MIGRATED,
+  after_migrated: () => env.TEMPLATE_AFTER_MIGRATED,
+  sleeper: () => env.TEMPLATE_SLEEPER,
+};
+
+const DIGEST_HEADING: Record<Pipeline, string> = {
+  before_migrated: "🌱 *BEFORE MIGRATED DIGEST*",
+  after_migrated: "🚀 *AFTER MIGRATED DIGEST*",
+  sleeper: "😴 *SLEEPER DIGEST*",
+};
+
+const POST_ALERT_TOPIC = () => target.topics.post_alert;
+
+export async function runAndSendDigest(args: DigestArgs, replyTo?: number): Promise<void> {
+  if (!target.chatId) {
+    logger.warn("digest skipped — no chat configured");
+    return;
+  }
+  const summary = review(args);
+
+  // Build full call list (re-run cheap path) so we can attach the CSV.
+  const tplPath = DIGEST_TEMPLATE_PATH[args.pipeline]();
+  const tpl = loadTemplate(tplPath);
+  const calls = findSimulatedCalls({
+    pipeline: args.pipeline,
+    fromMs: args.fromMs,
+    toMs: args.toMs,
+    threshold: tpl.score_threshold,
+    almostBand: args.almostBand ?? 15,
+  });
+  const reviewed: ReviewedCall[] = calls.map((c) => ({ ...c, exit: simulateExit(c) }));
+  const csv = callsToCsv(summary, reviewed);
+
+  let optimizerReport: StrategyReport | null = null;
+  if (env.HERMES_ENABLED && summary.triggeredCount > 0) {
+    try {
+      const optimizer = new StrategyOptimizer();
+      optimizerReport = await optimizer.analyze(summary, [...tpl.scoring, ...tpl.boosters]);
+    } catch (err) {
+      logger.warn({ err: String(err) }, "strategy optimizer failed — digest continues");
+    }
+  }
+
+  const text = formatDigest(summary, optimizerReport);
+  const thread = POST_ALERT_TOPIC() ? Number(POST_ALERT_TOPIC()) : undefined;
+
+  try {
+    await bot.telegram.sendMessage(target.chatId, text, {
+      parse_mode: "MarkdownV2",
+      link_preview_options: { is_disabled: true },
+      message_thread_id: thread,
+      reply_parameters: replyTo ? { message_id: replyTo } : undefined,
+    });
+    if (reviewed.length > 0) {
+      const fname = `digest_${args.pipeline}_${new Date(args.fromMs).toISOString().slice(0, 10)}.csv`;
+      await bot.telegram.sendDocument(
+        target.chatId,
+        Input.fromBuffer(Buffer.from(csv, "utf-8"), fname),
+        { message_thread_id: thread, caption: `${reviewed.length} calls` },
+      );
+    }
+  } catch (err) {
+    logger.error({ err: String(err) }, "digest send failed");
+  }
+}
+
+function formatDigest(s: BacktestSummary, optimizerReport?: StrategyReport | null): string {
+  const head = DIGEST_HEADING[s.pipeline];
+  const fromIso = new Date(s.windowFrom).toISOString().slice(0, 16).replace("T", " ");
+  const toIso = new Date(s.windowTo).toISOString().slice(0, 16).replace("T", " ");
+  const lines: string[] = [];
+  lines.push(`${head}  \`${escapeMarkdownV2(s.templateId)}\``);
+  lines.push(`Window: ${escapeMarkdownV2(fromIso)} → ${escapeMarkdownV2(toIso)} \\(UTC\\)`);
+  lines.push("");
+  lines.push("*Triggered*");
+  lines.push(formatStats(s.triggered));
+  lines.push("");
+  lines.push("*Almost*  \\(score within band of threshold\\)");
+  lines.push(formatStats(s.almost));
+
+  if (s.categoryInsight) {
+    lines.push("");
+    lines.push(`*Insight:* ${escapeMarkdownV2(s.categoryInsight)}`);
+  }
+
+  {
+    const cats = (["TA", "Volume", "Age", "Narrative"] as const).filter(
+      (cat) => s.categoryBreakdown[cat].maxPoints > 0,
+    );
+    if (cats.length > 0) {
+      lines.push("");
+      lines.push("*Category Strength* \\(triggered only\\)");
+      for (const cat of cats) {
+        const cs = s.categoryBreakdown[cat];
+        const pct = (cs.dominanceRatio * 100).toFixed(0);
+        const bar = "█".repeat(Math.round(cs.dominanceRatio * 10)) + "░".repeat(10 - Math.round(cs.dominanceRatio * 10));
+        const top = cs.topMetrics.slice(0, 2).map((m) => escapeMarkdownV2(m)).join(", ");
+        lines.push(
+          `\`${bar}\` *${escapeMarkdownV2(cat)}* ${escapeMarkdownV2(pct)}%${top ? " — " + top : ""}`,
+        );
+      }
+    }
+  }
+
+  if (s.metricCorrelation.length > 0) {
+    lines.push("");
+    lines.push("*Metric lift* \\(triggered only\\)");
+    for (const m of s.metricCorrelation.slice(0, 6)) {
+      const lift = (m.lift * 100).toFixed(1);
+      const pw = (m.passingWinRate * 100).toFixed(1);
+      const fw = (m.failingWinRate * 100).toFixed(1);
+      lines.push(
+        `• \`${escapeMarkdownV2(m.metric)}\`: ${escapeMarkdownV2(pw)}% vs ${escapeMarkdownV2(fw)}% ` +
+          `\\(lift ${escapeMarkdownV2(lift)}pp, n=${m.passingCount}/${m.failingCount}\\)`,
+      );
+    }
+  }
+
+  if (s.topWinners.length > 0) {
+    lines.push("");
+    lines.push("*Top winners*");
+    for (const w of s.topWinners) {
+      const pnl = (w.exit.pnlPct * 100).toFixed(1);
+      lines.push(
+        `• \`${escapeMarkdownV2(w.symbol)}\` ${escapeMarkdownV2(shortCa(w.ca))}  ${escapeMarkdownV2(pnl)}%  ${w.exit.outcome}`,
+      );
+    }
+  }
+  if (s.topLosers.length > 0) {
+    lines.push("");
+    lines.push("*Top losers*");
+    for (const l of s.topLosers) {
+      const pnl = (l.exit.pnlPct * 100).toFixed(1);
+      lines.push(
+        `• \`${escapeMarkdownV2(l.symbol)}\` ${escapeMarkdownV2(shortCa(l.ca))}  ${escapeMarkdownV2(pnl)}%  ${l.exit.outcome}`,
+      );
+    }
+  }
+
+  if (optimizerReport) {
+    lines.push(...formatOptimizerSection(optimizerReport));
+  }
+
+  return lines.join("\n");
+}
+
+function formatStats(s: ReturnType<typeof review> extends BacktestSummary ? BacktestSummary["triggered"] : never): string {
+  if (s.count === 0) return "_no calls_";
+  const wr = (s.winRate * 100).toFixed(1);
+  const avg = (s.avgPnlPct * 100).toFixed(1);
+  const wAvg = (s.weightedAvgPnlPct * 100).toFixed(1);
+  const total = s.totalRealizedSol.toFixed(3);
+  const dist = formatDistribution(s.outcomeDistribution);
+  const tt = s.avgTimeToTpMin === null ? "—" : `${s.avgTimeToTpMin.toFixed(1)}m`;
+  return [
+    `n=${s.count} · win=${escapeMarkdownV2(wr)}% · avg=${escapeMarkdownV2(avg)}% · w\\.avg=${escapeMarkdownV2(wAvg)}%`,
+    `realized=${escapeMarkdownV2(total)} SOL · avg time\\-to\\-TP=${escapeMarkdownV2(tt)}`,
+    dist,
+  ].join("\n");
+}
+
+function formatDistribution(d: Record<Outcome, number>): string {
+  const entries = (Object.entries(d) as [Outcome, number][]).filter(([, v]) => v > 0);
+  if (entries.length === 0) return "_no exits_";
+  return entries
+    .map(([k, v]) => `\`${escapeMarkdownV2(k)}\`=${v}`)
+    .join(" · ");
+}
+
+function shortCa(ca: string): string {
+  return ca.length <= 10 ? ca : `${ca.slice(0, 4)}…${ca.slice(-4)}`;
+}
+
+function formatOptimizerSection(report: StrategyReport): string[] {
+  const lines: string[] = ["", "*🔧 Strategy Recommendation*"];
+
+  if (report.recommendations.length === 0) {
+    lines.push("_Template sudah optimal berdasarkan data ini_");
+  } else {
+    for (const r of report.recommendations) {
+      const icon = r.recommendation === "raise" ? "⬆️" : r.recommendation === "remove" ? "❌" : "⬇️";
+      const pts =
+        r.suggestedPoints !== undefined
+          ? `${r.currentPoints}→${r.suggestedPoints}pts`
+          : `${r.currentPoints}pts`;
+      lines.push(
+        `${icon} \`${escapeMarkdownV2(r.metric)}\` ${escapeMarkdownV2(pts)} \\(${escapeMarkdownV2(r.reason)}\\)`,
+      );
+    }
+  }
+
+  lines.push(`_${escapeMarkdownV2(report.summary)}_`);
+
+  if (report.geminiNotes) {
+    lines.push("");
+    lines.push(`📝 ${escapeMarkdownV2(report.geminiNotes)}`);
+  }
+
+  return lines;
+}
